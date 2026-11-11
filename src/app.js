@@ -109,7 +109,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.4.0" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.4.1" });
   }
 
   // ───────────────────────────── AddOn
@@ -226,7 +226,7 @@ export async function handle(req, res) {
       }
       return send(res, 200, {
         email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings),
-        since: student.created_at, groupWinRate: gn ? Math.round((gw / gn) * 10000) / 100 : null, groupTrades: gn,
+        since: student.created_at, mentor: await store.mentorName(student.mentor_id), groupWinRate: gn ? Math.round((gw / gn) * 10000) / 100 : null, groupTrades: gn,
       });
     }
     throw new HttpError(404, "not_found");

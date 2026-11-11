@@ -108,6 +108,7 @@ test("ficha del alumno: operaciones y estadísticas del día", { skip }, async (
   assert.equal(s.json.open.length, 1);
   assert.equal(s.json.open[0].addedAgainst, true);
   assert.ok(s.json.since);                                // alumno desde
+  assert.ok(s.json.mentor);                               // nombre del mentor (lo ve el alumno)
   assert.equal(s.json.groupTrades, 2);                     // único alumno con operaciones: el grupo es él
   assert.equal(s.json.groupWinRate, s.json.winRate);
   assert.equal(s.json.daysTraded, 1);
