@@ -108,7 +108,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.2.0" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.2.1" });
   }
 
   // ───────────────────────────── AddOn
