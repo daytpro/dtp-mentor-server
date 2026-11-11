@@ -1,0 +1,178 @@
+// © Josué Morales Carmona · DayTraderProfesional (DTP)
+//
+//  AddOn (Authorization: Bearer <token de licencia DTP> + X-Machine-Id):
+//    POST /v1/consent     { state: accepted|paused|revoked, text_version, accounts: [nombres] }
+//    POST /v1/heartbeat   { session, app_version, queue_len }
+//    POST /v1/ingest      lote del protocolo v1 (src/protocol.js), JSON o gzip
+//  Base44 (cabecera x-admin-secret):
+//    GET  /admin/students
+//    GET  /admin/overview?day=AAAA-MM-DD&tz=Europe/Madrid
+//    GET  /admin/students/<email>/summary?from=AAAA-MM-DD&to=AAAA-MM-DD&tz=Europe/Madrid
+//    GET  /admin/students/<email>/trades?from=AAAA-MM-DD&to=AAAA-MM-DD
+//  Salud:  GET /health
+import http from "node:http";
+import zlib from "node:zlib";
+import { pool } from "./db.js";
+import { verifyLicense, isAdmin, AuthError } from "./auth.js";
+import { parseBatch, dedupeExecutions } from "./protocol.js";
+import { reconstruct } from "./core/trades.js";
+import { summarize } from "./core/stats.js";
+import { tradingDay, addDays } from "./core/time.js";
+import * as store from "./store.js";
+
+const MAX_RAW = 2_000_000, MAX_JSON = 8_000_000;
+const DAY = 86_400_000;
+
+function send(res, status, obj) {
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(JSON.stringify(obj));
+}
+
+class HttpError extends Error {
+  constructor(status, error, message) { super(message || error); this.status = status; this.error = error; }
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on("data", (c) => { size += c.length; if (size > MAX_RAW) { reject(new HttpError(413, "too_large")); req.destroy(); } else chunks.push(c); });
+    req.on("end", () => {
+      let buf = Buffer.concat(chunks);
+      try {
+        if (String(req.headers["content-encoding"] || "").toLowerCase() === "gzip") buf = zlib.gunzipSync(buf, { maxOutputLength: MAX_JSON });
+        resolve(buf.length ? JSON.parse(buf.toString("utf8")) : {});
+      } catch { reject(new HttpError(400, "bad_json", "JSON no válido")); }
+    });
+    req.on("error", () => reject(new HttpError(400, "bad_body")));
+  });
+}
+
+async function addonAuth(req) {
+  const h = String(req.headers.authorization || "");
+  const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+  const lic = await verifyLicense(token, String(req.headers["x-machine-id"] || "").trim());
+  const student = await store.studentByEmail(lic.email);
+  if (student.status !== "active") throw new HttpError(403, "archived", "Alumno dado de baja.");
+  return { lic, student };
+}
+
+const isDay = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const validTz = (tz) => { try { new Intl.DateTimeFormat("en", { timeZone: tz }); return tz; } catch { return "Europe/Madrid"; } };
+
+/** Operaciones cerradas cuyo día de sesión está en [from, to], y posiciones abiertas al final. */
+async function tradesFor(studentId, from, to) {
+  // margen de 2 días a cada lado: una operación puede empezar antes del primer día
+  const execs = await store.loadExecutions(studentId, Date.parse(from + "T00:00:00Z") - 2 * DAY, Date.parse(to + "T00:00:00Z") + 2 * DAY);
+  const r = reconstruct(execs);
+  return { ...r, trades: r.trades.filter((t) => t.day >= from && t.day <= to) };
+}
+
+async function overview(day, tz) {
+  const students = await store.listStudents();
+  const out = [];
+  for (const s of students) {
+    const { trades, open, fifo } = await tradesFor(s.id, day, day);
+    const accounts = await store.accountStates(s.id);
+    const stats = summarize(trades, { tz });
+    out.push({
+      email: s.email, name: s.name, consent: s.consent, last_seen: s.last_seen, queue_len: s.queue_len,
+      today: { trades: stats.trades, net: stats.net, winRate: stats.winRate, addedAgainst: stats.addedAgainst },
+      open,
+      accounts: accounts.map((a) => ({
+        name: a.name, conn: a.conn, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
+        // cuadre: realizado de la cuenta frente al realizado FIFO de las ejecuciones recibidas
+        reconciled: a.realized == null ? null : Math.abs((fifo.get(a.name + "|" + day) || 0) - a.realized) < 0.01,
+        fifo_realized: fifo.get(a.name + "|" + day) || 0,
+      })),
+    });
+  }
+  return { day, tz, students: out };
+}
+
+export async function handle(req, res) {
+  const url = new URL(req.url, "http://x");
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  if (req.method === "GET" && (path === "/health" || path === "/")) {
+    await pool.query("SELECT 1");
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.1.0" });
+  }
+
+  // ───────────────────────────── AddOn
+  if (path.startsWith("/v1/")) {
+    if (req.method !== "POST") throw new HttpError(405, "method");
+    const { lic, student } = await addonAuth(req);
+    const body = await readBody(req);
+
+    if (path === "/v1/consent") {
+      const state = body.state;
+      if (!["accepted", "paused", "revoked"].includes(state)) throw new HttpError(400, "bad_state");
+      const text_version = String(body.text_version || "").slice(0, 40);
+      if (state === "accepted" && !text_version) throw new HttpError(400, "bad_text_version");
+      const accounts = Array.isArray(body.accounts) ? body.accounts.filter((a) => typeof a === "string" && a.length <= 120).slice(0, 50) : [];
+      if (state === "accepted" && !accounts.length) throw new HttpError(400, "no_accounts", "Elige al menos una cuenta.");
+      const c = await store.saveConsent(student.id, { state, text_version: text_version || "-", accounts, machine_id: lic.machineId });
+      return send(res, 200, { ok: true, state: c.state, accounts: c.accounts });
+    }
+
+    if (path === "/v1/heartbeat") {
+      await store.heartbeat(student.id, {
+        machine_id: lic.machineId, session: String(body.session || "").slice(0, 80) || null,
+        app_version: String(body.app_version || "").slice(0, 40) || null,
+        queue_len: Number.isInteger(body.queue_len) ? body.queue_len : null,
+      });
+      const c = await store.currentConsent(student.id);
+      // el AddOn usa esto para saber qué cuentas enviar y si está pausado
+      return send(res, 200, { ok: true, consent: c ? c.state : null, accounts: c ? c.accounts : [] });
+    }
+
+    if (path === "/v1/ingest") {
+      const b = parseBatch(body);
+      if (b.error) throw new HttpError(400, b.error);
+      b.executions = dedupeExecutions(b.executions);
+      const r = await store.ingest(student.id, b);
+      return send(res, 200, { ok: true, ...r, rejected: b.errors.length, errors: b.errors.slice(0, 20) });
+    }
+    throw new HttpError(404, "not_found");
+  }
+
+  // ───────────────────────────── Base44
+  if (path.startsWith("/admin/")) {
+    if (!isAdmin(req)) throw new HttpError(401, "unauthorized");
+    if (req.method !== "GET") throw new HttpError(405, "method");
+    const tz = validTz(url.searchParams.get("tz") || "Europe/Madrid");
+
+    if (path === "/admin/students") return send(res, 200, { students: await store.listStudents() });
+
+    if (path === "/admin/overview") {
+      const day = isDay(url.searchParams.get("day")) ? url.searchParams.get("day") : tradingDay(Date.now());
+      return send(res, 200, await overview(day, tz));
+    }
+
+    const m = path.match(/^\/admin\/students\/([^/]+)\/(summary|trades)$/);
+    if (m) {
+      const student = await store.findStudent(decodeURIComponent(m[1]));
+      if (!student) throw new HttpError(404, "no_student");
+      const to = isDay(url.searchParams.get("to")) ? url.searchParams.get("to") : tradingDay(Date.now());
+      const from = isDay(url.searchParams.get("from")) ? url.searchParams.get("from") : addDays(to, -29);
+      if (from > to || Date.parse(to) - Date.parse(from) > 400 * DAY) throw new HttpError(400, "bad_range");
+      const { trades, open } = await tradesFor(student.id, from, to);
+      if (m[2] === "trades") return send(res, 200, { email: student.email, from, to, trades: trades.reverse(), open });
+      return send(res, 200, { email: student.email, from, to, ...summarize(trades, { tz }), open });
+    }
+    throw new HttpError(404, "not_found");
+  }
+
+  throw new HttpError(404, "not_found");
+}
+
+export function createServer() {
+  return http.createServer((req, res) => {
+    handle(req, res).catch((err) => {
+      if (err instanceof HttpError || err instanceof AuthError || err instanceof store.StoreError)
+        return send(res, err.status, { ok: false, error: err.error, message: err.message });
+      console.error(err);
+      send(res, 500, { ok: false, error: "server", message: "Error del servidor. Inténtalo más tarde." });
+    });
+  });
+}

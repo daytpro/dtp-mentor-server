@@ -1,0 +1,16 @@
+{
+  "name": "dtp-mentor-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DTP Mentor — servidor de seguimiento de alumnos (© Josué Morales Carmona · DayTraderProfesional)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "pg": "^8.12.0"
+  }
+}
