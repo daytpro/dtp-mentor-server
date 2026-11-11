@@ -16,7 +16,7 @@ Fase 2: reglas de conducta (revancha, exceso de contratos, promediar en contra, 
 | `POST /v1/ingest` | AddOn | Lote del protocolo v1 (`src/protocol.js`), JSON o gzip |
 | `GET /admin/students` | Base44 | Lista de alumnos con consentimiento y último latido |
 | `GET /admin/overview?day=&tz=` | Base44 | Vista general del día: P&L, posiciones abiertas, cuadre |
-| `GET /admin/students/<email>/summary?from=&to=&tz=` | Base44 | Ficha: estadísticas, curva, horas, instrumentos |
+| `GET /admin/students/<email>/summary?from=&to=&tz=` | Base44 | Ficha: estadísticas, curva, horas, instrumentos, mejor/peor día, contratos habituales, acierto del grupo |
 | `GET /admin/students/<email>/trades?from=&to=` | Base44 | Lista de operaciones |
 | `GET /admin/alerts?since=&email=&limit=` | Base44 | Alertas de conducta y de consentimiento |
 | `POST /admin/names` | Base44 | Nombre de cada alumno (para Discord) |

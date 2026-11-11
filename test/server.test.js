@@ -107,6 +107,10 @@ test("ficha del alumno: operaciones y estadísticas del día", { skip }, async (
   assert.equal(s.json.net, -49);
   assert.equal(s.json.open.length, 1);
   assert.equal(s.json.open[0].addedAgainst, true);
+  assert.ok(s.json.since);                                // alumno desde
+  assert.equal(s.json.groupTrades, 2);                     // único alumno con operaciones: el grupo es él
+  assert.equal(s.json.groupWinRate, s.json.winRate);
+  assert.equal(s.json.daysTraded, 1);
   const t = await call("GET", "/admin/students/alumno@prueba.dtp/trades" + q, { admin: ADMIN });
   assert.equal(t.json.trades.length, 2);
   assert.equal(t.json.trades[0].side, "Long");            // la más reciente primero

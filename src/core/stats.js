@@ -16,11 +16,14 @@ export function summarize(trades, { tz = "Europe/Madrid" } = {}) {
 
   // rachas y peor caída de la curva
   let curW = 0, curL = 0, maxW = 0, maxL = 0, eq = 0, peak = 0, maxDD = 0;
+  let peakDay = valid.length ? valid[0].day : null, ddFrom = null, ddTo = null;
   const curve = [];
   for (const t of valid) {
     if (t.net > 0) { curW++; curL = 0; } else if (t.net < 0) { curL++; curW = 0; }
     maxW = Math.max(maxW, curW); maxL = Math.max(maxL, curL);
-    eq += t.net; peak = Math.max(peak, eq); maxDD = Math.min(maxDD, eq - peak);
+    eq += t.net;
+    if (eq > peak) { peak = eq; peakDay = t.day; }
+    if (eq - peak < maxDD) { maxDD = eq - peak; ddFrom = peakDay; ddTo = t.day; }
   }
 
   // por día de sesión (curva de capital), hora local e instrumento
@@ -42,6 +45,11 @@ export function summarize(trades, { tz = "Europe/Madrid" } = {}) {
   }
 
   const n = valid.length;
+  const days = curve.map((c) => c.net);
+  const best = curve.reduce((b, c) => (b == null || c.net > b.net ? c : b), null);
+  const worst = curve.reduce((w, c) => (w == null || c.net < w.net ? c : w), null);
+  const qtys = valid.map((t) => t.maxQty || t.qty).filter((q) => q > 0).sort((a, b) => a - b);
+  const median = qtys.length ? (qtys.length % 2 ? qtys[(qtys.length - 1) / 2] : (qtys[qtys.length / 2 - 1] + qtys[qtys.length / 2]) / 2) : null;
   return {
     trades: n,
     wins: wins.length,
@@ -56,6 +64,14 @@ export function summarize(trades, { tz = "Europe/Madrid" } = {}) {
     maxWinStreak: maxW,
     maxLossStreak: maxL,
     maxDrawdown: round2(maxDD),
+    maxDrawdownFrom: maxDD < 0 ? ddFrom : null,     // día de sesión del máximo anterior
+    maxDrawdownTo: maxDD < 0 ? ddTo : null,         // día de sesión del punto más bajo
+    daysTraded: days.length,
+    bestDay: best && best.net > 0 ? { day: best.day, net: best.net } : null,
+    worstDay: worst && worst.net < 0 ? { day: worst.day, net: worst.net } : null,
+    avgDurationMs: n ? Math.round(valid.reduce((a, t) => a + (t.durationMs || 0), 0) / n) : null,
+    usualQty: median,                                // mediana de contratos (máximo de cada operación)
+    maxQty: qtys.length ? qtys[qtys.length - 1] : null,
     addedAgainst: valid.filter((t) => t.addedAgainst).length,
     curve,
     byHour: [...byHour].sort((a, b) => a[0] - b[0]).map(([hour, r]) => ({ hour, ...r })),

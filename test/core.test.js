@@ -103,6 +103,20 @@ test("estadísticas: acierto, medias, esperanza, rachas, caída", () => {
   assert.equal(s.byHour[0].hour, 15);                    // 14:30 UTC = 15:30 Madrid
 });
 
+test("estadísticas de la ficha: días, mejor y peor día, fechas de la caída, duración y contratos", () => {
+  const mk = ([day, net, qty, min], i) => ({ net, day, qty, maxQty: qty, durationMs: min * 60_000, exitTime: T0 + i, entryTime: T0 + i, instr: "MNQ 12-26", addedAgainst: false });
+  const s = summarize([["2026-11-05", 300, 2, 2], ["2026-11-06", -200, 2, 4], ["2026-11-07", -150, 5, 6], ["2026-11-07", 50, 1, 4], ["2026-11-10", 400, 2, 4]].map(mk));
+  assert.equal(s.daysTraded, 4);
+  assert.deepEqual(s.bestDay, { day: "2026-11-10", net: 400 });
+  assert.deepEqual(s.worstDay, { day: "2026-11-06", net: -200 });
+  assert.equal(s.maxDrawdown, -350);
+  assert.equal(s.maxDrawdownFrom, "2026-11-05"); assert.equal(s.maxDrawdownTo, "2026-11-07");
+  assert.equal(s.avgDurationMs, 4 * 60_000);
+  assert.equal(s.usualQty, 2); assert.equal(s.maxQty, 5);
+  const none = summarize([]);
+  assert.equal(none.bestDay, null); assert.equal(none.maxDrawdownFrom, null); assert.equal(none.usualQty, null);
+});
+
 test("día de sesión CME: cambia a las 17:00 de Nueva York", () => {
   assert.equal(tradingDay(Date.parse("2026-11-11T21:59:00Z")), "2026-11-11");  // 16:59 NY
   assert.equal(tradingDay(Date.parse("2026-11-11T22:01:00Z")), "2026-11-12");  // 17:01 NY

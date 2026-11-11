@@ -109,7 +109,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.3.1" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.4.0" });
   }
 
   // ───────────────────────────── AddOn
@@ -218,7 +218,16 @@ export async function handle(req, res) {
       // conducta del periodo (incluye lo histórico; los stops solo existen desde que hay AddOn)
       const orders = await store.loadOrders(student.id, Date.parse(from + "T00:00:00Z") - 2 * DAY, Date.parse(to + "T00:00:00Z") + 2 * DAY);
       const findings = evaluate({ trades, open, orders }).filter((f) => { const d = tradingDay(f.at); return d >= from && d <= to; });
-      return send(res, 200, { email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings) });
+      // acierto del grupo en el mismo periodo (para comparar)
+      let gw = 0, gn = 0;
+      for (const o of await store.listStudents()) {
+        const r = o.id === student.id ? { trades } : await tradesFor(o.id, from, to);
+        for (const t of r.trades) if (t.net != null) { gn++; if (t.net > 0) gw++; }
+      }
+      return send(res, 200, {
+        email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings),
+        since: student.created_at, groupWinRate: gn ? Math.round((gw / gn) * 10000) / 100 : null, groupTrades: gn,
+      });
     }
     throw new HttpError(404, "not_found");
   }
