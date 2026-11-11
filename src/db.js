@@ -43,6 +43,9 @@ export async function migrate() {
       created_at    timestamptz NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS consents_student ON consents (student_id, id DESC);
+    ALTER TABLE consents ADD COLUMN IF NOT EXISTS reason text;                 -- motivo de la pausa (obligatorio)
+    ALTER TABLE consents ADD COLUMN IF NOT EXISTS pause_until timestamptz;    -- null = hasta que la reanude
+    ALTER TABLE consents ADD COLUMN IF NOT EXISTS delete_requested boolean NOT NULL DEFAULT false;
 
     CREATE TABLE IF NOT EXISTS accounts (
       id          bigserial PRIMARY KEY,

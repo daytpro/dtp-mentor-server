@@ -1,7 +1,8 @@
 // © Josué Morales Carmona · DayTraderProfesional (DTP)
 //
 //  AddOn (Authorization: Bearer <token de licencia DTP> + X-Machine-Id):
-//    POST /v1/consent     { state: accepted|paused|revoked, text_version, accounts: [nombres] }
+//    POST /v1/consent     { state: accepted|paused|revoked, text_version, accounts: [nombres],
+//                           reason (obligatorio al pausar), pause_until (UTC, opcional), delete_data (al retirar) }
 //    POST /v1/heartbeat   { session, app_version, queue_len }
 //    POST /v1/ingest      lote del protocolo v1 (src/protocol.js), JSON o gzip
 //  Base44 (cabecera x-admin-secret):
@@ -17,7 +18,7 @@ import { verifyLicense, isAdmin, AuthError } from "./auth.js";
 import { parseBatch, dedupeExecutions } from "./protocol.js";
 import { reconstruct } from "./core/trades.js";
 import { summarize } from "./core/stats.js";
-import { tradingDay, addDays } from "./core/time.js";
+import { tradingDay, addDays, parseUtc } from "./core/time.js";
 import * as store from "./store.js";
 
 const MAX_RAW = 2_000_000, MAX_JSON = 8_000_000;
@@ -75,7 +76,7 @@ async function overview(day, tz) {
     const accounts = await store.accountStates(s.id);
     const stats = summarize(trades, { tz });
     out.push({
-      email: s.email, name: s.name, consent: s.consent, last_seen: s.last_seen, queue_len: s.queue_len,
+      email: s.email, name: s.name, consent: s.consent, pause_reason: s.pause_reason, pause_until: s.pause_until, last_seen: s.last_seen, queue_len: s.queue_len,
       today: { trades: stats.trades, net: stats.net, winRate: stats.winRate, addedAgainst: stats.addedAgainst },
       open,
       accounts: accounts.map((a) => ({
@@ -111,8 +112,20 @@ export async function handle(req, res) {
       if (state === "accepted" && !text_version) throw new HttpError(400, "bad_text_version");
       const accounts = Array.isArray(body.accounts) ? body.accounts.filter((a) => typeof a === "string" && a.length <= 120).slice(0, 50) : [];
       if (state === "accepted" && !accounts.length) throw new HttpError(400, "no_accounts", "Elige al menos una cuenta.");
-      const c = await store.saveConsent(student.id, { state, text_version: text_version || "-", accounts, machine_id: lic.machineId });
-      return send(res, 200, { ok: true, state: c.state, accounts: c.accounts });
+      // Pausar exige motivo (lo lee el mentor). Retirar permite pedir el borrado de los datos.
+      const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 280) : "";
+      if (state === "paused" && reason.length < 10) throw new HttpError(400, "reason_required", "Escribe el motivo de la pausa (mín. 10 caracteres).");
+      let pause_until = null;
+      if (state === "paused" && body.pause_until != null) {
+        const t = parseUtc(body.pause_until);
+        if (t == null || t <= Date.now()) throw new HttpError(400, "bad_pause_until");
+        pause_until = new Date(t);
+      }
+      const c = await store.saveConsent(student.id, {
+        state, text_version: text_version || "-", accounts, machine_id: lic.machineId,
+        reason: reason || null, pause_until, delete_requested: state === "revoked" && body.delete_data === true,
+      });
+      return send(res, 200, { ok: true, state: c.state, accounts: c.accounts, reason: c.reason, pause_until: c.pause_until, delete_requested: c.delete_requested });
     }
 
     if (path === "/v1/heartbeat") {

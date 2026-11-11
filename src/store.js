@@ -24,11 +24,16 @@ export async function currentConsent(studentId, db = pool) {
   return c || null;
 }
 
-export async function saveConsent(studentId, { state, text_version, accounts, machine_id }) {
+export async function saveConsent(studentId, { state, text_version, accounts, machine_id, reason = null, pause_until = null, delete_requested = false }) {
+  // pausar o retirar conserva las cuentas y la versión del texto del último consentimiento aceptado
+  if (state !== "accepted") {
+    const prev = await currentConsent(studentId);
+    if (prev) { accounts = prev.accounts; text_version = prev.text_version; }
+  }
   const { rows: [c] } = await pool.query(
-    `INSERT INTO consents (student_id, state, text_version, accounts, machine_id)
-     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-    [studentId, state, text_version, JSON.stringify(accounts), machine_id]);
+    `INSERT INTO consents (student_id, state, text_version, accounts, machine_id, reason, pause_until, delete_requested)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [studentId, state, text_version, JSON.stringify(accounts), machine_id, reason, pause_until, delete_requested]);
   return c;
 }
 
@@ -162,7 +167,7 @@ export async function loadExecutions(studentId, fromMs, toMs) {
 export async function listStudents() {
   const { rows } = await pool.query(
     `SELECT s.id, s.email, s.name, s.status, s.mentor_id,
-            c.state AS consent, c.accounts AS shared_accounts,
+            c.state AS consent, c.accounts AS shared_accounts, c.reason AS pause_reason, c.pause_until, c.delete_requested, c.created_at AS consent_at,
             (SELECT max(h.last_seen) FROM heartbeats h WHERE h.student_id = s.id) AS last_seen,
             (SELECT max(h.queue_len) FROM heartbeats h WHERE h.student_id = s.id AND h.last_seen > now() - interval '2 minutes') AS queue_len
        FROM students s

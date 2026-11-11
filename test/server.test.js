@@ -124,8 +124,14 @@ test("vista general: posición abierta y cuadre con la cuenta", { skip }, async 
 
 test("pausa: rechaza; cuenta no compartida: se descarta", { skip }, async () => {
   const tok = await token();
-  await call("POST", "/v1/consent", { tok, body: { state: "paused" } });
+  assert.equal((await call("POST", "/v1/consent", { tok, body: { state: "paused" } })).json.error, "reason_required");
+  assert.equal((await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "viaje" } })).json.error, "reason_required");
+  const p = await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "Me voy de viaje hasta el lunes" } });
+  assert.equal(p.status, 200);
+  assert.deepEqual(p.json.accounts, ["SIM-PRUEBA", "RITHMIC-PRUEBA"]);   // conserva las cuentas
   assert.equal((await call("POST", "/v1/ingest", { tok, body: batch([]) })).json.error, "paused");
+  const o = await call("GET", "/admin/students", { admin: ADMIN });
+  assert.equal(o.json.students[0].pause_reason, "Me voy de viaje hasta el lunes");
 
   await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["SIM-PRUEBA"] } });
   const ev = [{ k: "exec", acct: "REAL-NO-COMPARTIDA", exec_id: "z1", instr: "MNQ 12-26", side: "Long", qty: 1, price: 1, time: "2026-11-11T10:00:00Z", seq: 1 }];
@@ -134,4 +140,12 @@ test("pausa: rechaza; cuenta no compartida: se descarta", { skip }, async () => 
   assert.equal(r.json.skipped_not_shared, 1);
   const { rows } = await pool.query("SELECT count(*)::int AS n FROM accounts WHERE name = 'REAL-NO-COMPARTIDA'");
   assert.equal(rows[0].n, 0);
+});
+
+test("retirar: puede pedir el borrado de los datos", { skip }, async () => {
+  const tok = await token();
+  const r = await call("POST", "/v1/consent", { tok, body: { state: "revoked", delete_data: true } });
+  assert.equal(r.json.state, "revoked");
+  assert.equal(r.json.delete_requested, true);
+  assert.equal((await call("POST", "/v1/ingest", { tok, body: batch([]) })).json.error, "no_consent");
 });
