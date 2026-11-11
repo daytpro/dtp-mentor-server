@@ -79,12 +79,19 @@ async function overview(day, tz) {
       email: s.email, name: s.name, consent: s.consent, pause_reason: s.pause_reason, pause_until: s.pause_until, last_seen: s.last_seen, queue_len: s.queue_len,
       today: { trades: stats.trades, net: stats.net, winRate: stats.winRate, addedAgainst: stats.addedAgainst },
       open,
-      accounts: accounts.map((a) => ({
-        name: a.name, conn: a.conn, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
-        // cuadre: realizado de la cuenta frente al realizado FIFO de las ejecuciones recibidas
-        reconciled: a.realized == null ? null : Math.abs((fifo.get(a.name + "|" + day) || 0) - a.realized) < 0.01,
-        fifo_realized: fifo.get(a.name + "|" + day) || 0,
-      })),
+      accounts: accounts.map((a) => {
+        // Cuadre: realizado de la cuenta frente al realizado FIFO de las ejecuciones recibidas.
+        // Solo se compara con un dato de la cuenta POSTERIOR a la última ejecución recibida y con el
+        // alumno enviando; si no, el realizado puede ser de antes del cierre (p. ej. pausó justo después).
+        const fifoR = fifo.get(a.name + "|" + day) || 0;
+        const fresh = a.realized != null && s.consent === "accepted" &&
+          (!a.last_exec_at || (a.updated_at && new Date(a.updated_at) >= new Date(a.last_exec_at)));
+        return {
+          name: a.name, conn: a.conn, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
+          reconciled: fresh ? Math.abs(fifoR - a.realized) < 0.01 : null,   // null = sin dato reciente
+          fifo_realized: fifoR,
+        };
+      }),
     });
   }
   return { day, tz, students: out };

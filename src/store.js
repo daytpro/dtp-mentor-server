@@ -179,7 +179,8 @@ export async function listStudents() {
 
 export async function accountStates(studentId) {
   const { rows } = await pool.query(
-    `SELECT a.name, a.conn, a.provider, st.realized, st.unrealized, st.positions, st.updated_at
+    `SELECT a.name, a.conn, a.provider, st.realized, st.unrealized, st.positions, st.updated_at,
+            (SELECT max(e.received_at) FROM executions e WHERE e.account_id = a.id) AS last_exec_at
        FROM accounts a LEFT JOIN account_state st ON st.account_id = a.id
       WHERE a.student_id = $1 ORDER BY a.name`, [studentId]);
   return rows;

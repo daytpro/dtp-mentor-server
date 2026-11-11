@@ -173,3 +173,19 @@ test("formato exacto del AddOn v1.0.0 (nulos, hora .fffZ, order_ref, pausa con f
   assert.equal(hb.json.consent, "paused");
   assert.equal(hb.json.reason, "Cita médica esta tarde");
 });
+
+test("cuadre: sin dato reciente de la cuenta o en pausa → null, nunca un falso «no coincide»", { skip }, async () => {
+  const tok = await token({ sub: "cuadre@prueba.dtp" });
+  await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["C1"] } });
+  const ex = (id, side, price, t) => ({ k: "exec", acct: "C1", exec_id: id, instr: "MNQ 12-26", side, qty: 1, price, point_value: 2, time: t, seq: Number(id.slice(1)), origin: "live" });
+  // P&L de la cuenta enviado ANTES del cierre (realizado 0) y luego las ejecuciones
+  await call("POST", "/v1/ingest", { tok, body: batch([{ k: "pnl", acct: "C1", realized: 0, unrealized: 0, time: "2026-11-11T12:00:00Z" }]) });
+  await new Promise((r) => setTimeout(r, 20));
+  await call("POST", "/v1/ingest", { tok, body: batch([ex("e1", "Long", 100, "2026-11-11T12:01:00Z"), ex("e2", "Short", 82.5, "2026-11-11T12:02:00Z")]) });
+  const get = async () => (await call("GET", "/admin/overview?day=2026-11-11", { admin: ADMIN })).json.students.find((x) => x.email === "cuadre@prueba.dtp").accounts[0];
+  assert.equal((await get()).reconciled, null);           // dato viejo: no se compara
+  await call("POST", "/v1/ingest", { tok, body: batch([{ k: "pnl", acct: "C1", realized: -35, unrealized: 0, time: "2026-11-11T12:02:05Z" }]) });
+  assert.equal((await get()).reconciled, true);           // dato nuevo: cuadra (−17,5 × 2 = −35)
+  await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "prueba de cuadre en pausa" } });
+  assert.equal((await get()).reconciled, null);           // en pausa: no se compara
+});
