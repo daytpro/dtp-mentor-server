@@ -135,8 +135,12 @@ export async function handle(req, res) {
         queue_len: Number.isInteger(body.queue_len) ? body.queue_len : null,
       });
       const c = await store.currentConsent(student.id);
-      // el AddOn usa esto para saber qué cuentas enviar y si está pausado
-      return send(res, 200, { ok: true, consent: c ? c.state : null, accounts: c ? c.accounts : [] });
+      const mentor = await store.mentorName(student.mentor_id);
+      // el AddOn usa esto para saber qué cuentas enviar, si está pausado y a quién envía
+      return send(res, 200, {
+        ok: true, consent: c ? c.state : null, accounts: c ? c.accounts : [],
+        reason: c ? c.reason : null, pause_until: c ? c.pause_until : null, mentor,
+      });
     }
 
     if (path === "/v1/ingest") {

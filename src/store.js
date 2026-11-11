@@ -184,3 +184,8 @@ export async function accountStates(studentId) {
       WHERE a.student_id = $1 ORDER BY a.name`, [studentId]);
   return rows;
 }
+
+export async function mentorName(id) {
+  const { rows: [m] } = await pool.query("SELECT name FROM mentors WHERE id = $1", [id]);
+  return m ? m.name : null;
+}

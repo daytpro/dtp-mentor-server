@@ -21,7 +21,7 @@ export async function migrate() {
       name        text NOT NULL,
       created_at  timestamptz NOT NULL DEFAULT now()
     );
-    INSERT INTO mentors (id, name) VALUES (1, 'DTP') ON CONFLICT (id) DO NOTHING;
+    INSERT INTO mentors (id, name) VALUES (1, 'Josué Morales · DayTraderProfesional') ON CONFLICT (id) DO NOTHING;
 
     CREATE TABLE IF NOT EXISTS students (
       id          bigserial PRIMARY KEY,

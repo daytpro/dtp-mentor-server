@@ -95,6 +95,7 @@ test("latido: devuelve las cuentas compartidas", { skip }, async () => {
   const r = await call("POST", "/v1/heartbeat", { tok: await token(), body: { session: "s-prueba", app_version: "0.1", queue_len: 0 } });
   assert.equal(r.json.consent, "accepted");
   assert.deepEqual(r.json.accounts, ["SIM-PRUEBA", "RITHMIC-PRUEBA"]);
+  assert.equal(r.json.mentor, "Josué Morales · DayTraderProfesional");
 });
 
 test("ficha del alumno: operaciones y estadísticas del día", { skip }, async () => {
@@ -148,4 +149,27 @@ test("retirar: puede pedir el borrado de los datos", { skip }, async () => {
   assert.equal(r.json.state, "revoked");
   assert.equal(r.json.delete_requested, true);
   assert.equal((await call("POST", "/v1/ingest", { tok, body: batch([]) })).json.error, "no_consent");
+});
+
+test("formato exacto del AddOn v1.0.0 (nulos, hora .fffZ, order_ref, pausa con fecha)", { skip }, async () => {
+  const tok = await token({ sub: "addon@prueba.dtp" });
+  const c = await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["Cuenta 50K"] } });
+  assert.equal(c.status, 200);
+  const ev = [
+    { k: "exec", acct: "Cuenta 50K", exec_id: "X1", order_ref: "a1b2c3d4-1", order_id: "72994789", instr: "MNQ 12-26", side: "Short", qty: 1, price: 28204.75, point_value: 2, time: "2026-11-11T07:52:19.661Z", seq: 1, commission: 0, origin: "live" },
+    { k: "exec", acct: "Cuenta 50K", exec_id: "X0", order_ref: null, order_id: "1", instr: "MNQ 12-26", side: "Long", qty: 1, price: 28000, point_value: null, time: "2026-10-01T14:00:00.000Z", seq: 2, commission: 0.62, origin: "history" },
+    { k: "order", acct: "Cuenta 50K", order_ref: "a1b2c3d4-2", order_id: "698556de", name: "Stop1", instr: "MNQ 12-26", type: "StopMarket", action: "BuyToCover", state: "ChangeSubmitted", qty: 1, filled: 0, limit: 0, stop: 28223, avg_fill: 0, time: "2026-11-11T07:52:38.541Z", seq: 3 },
+    { k: "pos", acct: "Cuenta 50K", instr: "MNQ 12-26", side: "Short", qty: 1, avg: 28204.75, time: "2026-11-11T07:52:20.140Z" },
+    { k: "pnl", acct: "Cuenta 50K", realized: null, unrealized: -12.5, time: "2026-11-11T07:52:21.000Z" },
+  ];
+  const r = await call("POST", "/v1/ingest", { tok, body: { v: 1, session: "0123456789abcdef0123456789abcdef", machine_id: "M-PRUEBA", sent_at: "2026-11-11T07:52:22.000Z", events: ev } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.rejected, 0, JSON.stringify(r.json.errors));
+  assert.equal(r.json.executions, 2);
+  assert.equal(r.json.orders, 1);
+  const p = await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "Cita médica esta tarde", pause_until: "2099-01-01T08:00:00.000Z" } });
+  assert.equal(p.status, 200);
+  const hb = await call("POST", "/v1/heartbeat", { tok, body: { session: "0123456789abcdef0123456789abcdef", app_version: "1.0.0", queue_len: 0 } });
+  assert.equal(hb.json.consent, "paused");
+  assert.equal(hb.json.reason, "Cita médica esta tarde");
 });
