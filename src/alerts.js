@@ -13,7 +13,7 @@ import * as store from "./store.js";
 import { reconstruct } from "./core/trades.js";
 import { evaluate } from "./core/rules.js";
 import { localParts } from "./core/time.js";
-import { describe } from "./core/describe.js";
+import { describe, untilText } from "./core/describe.js";
 
 export { describe };
 
@@ -56,7 +56,7 @@ export async function consentChanged(student, c, erased = null) {
   let text, rule;
   if (c.state === "paused") {
     rule = "pause";
-    const until = c.pause_until ? `hasta el ${localParts(new Date(c.pause_until).getTime(), TZ).date} a las ${hhmm(new Date(c.pause_until).getTime())}` : "hasta que lo reanude";
+    const until = c.pause_until ? untilText(new Date(c.pause_until).getTime(), new Date(c.created_at).getTime(), TZ) : "hasta que lo reanude";
     text = `Pausó el envío ${until}. Motivo: «${c.reason}»`;
   } else if (c.state === "revoked") {
     rule = "revoke";

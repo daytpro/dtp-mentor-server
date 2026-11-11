@@ -97,3 +97,14 @@ test("promediar en contra: el texto dice de cuántos a cuántos contratos y la p
   // datos antiguos sin el detalle: el texto de siempre
   assert.match(describe({ rule: "added", data: { side: "Long" } }), /^Promedió en contra: añadió contratos al largo/);
 });
+
+test("pausa: hasta cuándo, en lenguaje natural (hora de Madrid)", async () => {
+  const { untilText } = await import("../src/core/describe.js");
+  const now = Date.parse("2026-11-11T14:55:00Z");                       // miércoles 15:55 en Madrid
+  assert.equal(untilText(Date.parse("2026-11-11T17:00:00Z"), now), "hasta hoy a las 18:00");
+  assert.equal(untilText(Date.parse("2026-11-12T08:00:00Z"), now), "hasta mañana jueves 12/11 a las 09:00");
+  assert.equal(untilText(Date.parse("2026-11-16T08:00:00Z"), now), "hasta el lunes 16/11 a las 09:00");
+  assert.equal(untilText(Date.parse("2027-01-04T08:00:00Z"), now), "hasta el lunes 04/01/2027 a las 09:00");
+  // pasada la medianoche en Madrid (23:30 UTC = 00:30 del día siguiente)
+  assert.equal(untilText(Date.parse("2026-11-11T23:30:00Z"), now), "hasta mañana jueves 12/11 a las 00:30");
+});
