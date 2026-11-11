@@ -93,7 +93,7 @@ async function overview(day, tz) {
         const fresh = a.realized != null && s.consent === "accepted" &&
           (!a.last_exec_at || (a.updated_at && new Date(a.updated_at) >= new Date(a.last_exec_at)));
         return {
-          name: a.name, conn: a.conn, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
+          name: a.name, conn: a.conn, provider: a.provider, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
           reconciled: fresh ? Math.abs(fifoR - a.realized) < 0.01 : null,   // null = sin dato reciente
           fifo_realized: fifoR,
         };
