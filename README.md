@@ -41,7 +41,6 @@ Fase 2: reglas de conducta (revancha, exceso de contratos, promediar en contra, 
 | `LICENSE_PUBLIC_KEY` | La clave pública del servidor de licencias (`GET /public-key`). No es secreta |
 | `MENTOR_PRODUCT_CODE` | El código del producto DTP Mentor en los accesos de Base44 |
 | `MENTOR_ADMIN_SECRET` | Secreto largo aleatorio (mín. 24), el mismo que en los secrets de Base44 |
-
 | `DISCORD_WEBHOOK_URL` | Webhook del canal de Discord del mentor (secreto). Sin él, las alertas se guardan y se ven en el panel |
 | `DISCORD_WEBHOOK_URGENT` | Opcional: otro canal solo para urgentes y pausas |
 
