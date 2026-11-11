@@ -38,6 +38,7 @@ function newTrade(x, dir, pv) {
     entryQty: 0, entryValue: 0, exitQty: 0, exitValue: 0,
     commission: 0,
     addedAgainst: false,   // añadió contratos con la operación en pérdida
+    added: null,           // la primera vez: { from, to, points, usd } (pérdida abierta en ese momento)
     origins: new Set(), execIds: [],
   };
 }
@@ -67,7 +68,7 @@ function finish(tr, x) {
     points: round2((avgExit - avgEntry) * dir),
     pnl, commission: round2(tr.commission),
     net: pnl != null ? round2(pnl - tr.commission) : null,
-    addedAgainst: tr.addedAgainst,
+    addedAgainst: tr.addedAgainst, added: tr.added,
     origins: [...tr.origins].sort(),
     execIds: tr.execIds,
   };
@@ -116,7 +117,17 @@ export function reconstruct(executions) {
       if (sameDir) {
         if (s.pos !== 0) {
           const avg = tr.entryValue / tr.entryQty;
-          if ((s.pos > 0 && x.price < avg) || (s.pos < 0 && x.price > avg)) tr.addedAgainst = true;
+          if ((s.pos > 0 && x.price < avg) || (s.pos < 0 && x.price > avg)) {
+            tr.addedAgainst = true;
+            if (!tr.added) {
+              const pts = (x.price - avg) * Math.sign(s.pos);
+              tr.added = {
+                from: Math.abs(s.pos), to: Math.abs(s.pos + signed),
+                points: round2(pts),
+                usd: tr.pointValue != null ? round2(pts * Math.abs(s.pos) * tr.pointValue) : null,
+              };
+            }
+          }
         }
         apply(tr, x, signed, true);
         tr.commission += commissionPerContract * Math.abs(signed);
@@ -145,7 +156,7 @@ export function reconstruct(executions) {
       open.push({
         acct, instr, side: s.pos > 0 ? "Long" : "Short", qty: Math.abs(s.pos),
         avgEntry: round4(s.tr.entryValue / s.tr.entryQty),
-        entryTime: s.tr.entryTime, addedAgainst: s.tr.addedAgainst,
+        entryTime: s.tr.entryTime, addedAgainst: s.tr.addedAgainst, added: s.tr.added,
         maxQty: s.tr.maxQty, origins: [...s.tr.origins].sort(),
       });
     }

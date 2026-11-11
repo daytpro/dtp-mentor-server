@@ -88,3 +88,12 @@ test("stop de entrada movido sin posición: no cuenta", () => {
   ];
   assert.equal(evaluate({ trades: [], open: [], orders }).length, 0);
 });
+
+test("promediar en contra: el texto dice de cuántos a cuántos contratos y la pérdida", async () => {
+  const { describe } = await import("../src/core/describe.js");
+  const text = describe({ rule: "added", acct: "SimAccount1", instr: "MNQ 12-26",
+    data: { side: "Short", from: 1, to: 2, points: -16.75, usd: -33.5 } });
+  assert.equal(text, "Promedió en contra: pasó de 1 a 2 contratos al corto con la operación en pérdida (−33,5 $, −16,75 puntos). SimAccount1 · MNQ");
+  // datos antiguos sin el detalle: el texto de siempre
+  assert.match(describe({ rule: "added", data: { side: "Long" } }), /^Promedió en contra: añadió contratos al largo/);
+});

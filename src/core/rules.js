@@ -67,7 +67,7 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
           data: { qty: t.qty, habitual } });
       }
       if (t.addedAgainst) out.push({ ...base, rule: "added", level: "important", key: key("added"),
-        data: { side: t.side, qty: t.qty, avgEntry: t.avgEntry } });
+        data: { side: t.side, qty: t.qty, avgEntry: t.avgEntry, ...(t.added || {}) } });
     }
 
     // rachas de pérdidas por día de sesión (un aviso al llegar a N)

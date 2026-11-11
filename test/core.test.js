@@ -42,6 +42,7 @@ test("sonda real: RITHMIC — sigue abierta, promedio en contra y cuadre FIFO = 
   assert.equal(open.length, 1);
   assert.equal(open[0].side, "Short"); assert.equal(open[0].qty, 3);
   assert.equal(open[0].addedAgainst, true);              // vendió a 28221,50 con el corto de 28204,75 en pérdida
+  assert.deepEqual(open[0].added, { from: 1, to: 2, points: -16.75, usd: -33.5 });
   assert.equal(fifo.get("RITHMIC-PRUEBA|2026-11-11"), -49);
   // el realizado que dio la propia cuenta al final de la prueba
   const last = sondaLines().filter((l) => l.kind === "pnl" && l.acct === "RITHMIC-PRUEBA").at(-1);

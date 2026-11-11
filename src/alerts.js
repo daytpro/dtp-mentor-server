@@ -13,31 +13,17 @@ import * as store from "./store.js";
 import { reconstruct } from "./core/trades.js";
 import { evaluate } from "./core/rules.js";
 import { localParts } from "./core/time.js";
+import { describe } from "./core/describe.js";
+
+export { describe };
 
 const DAY = 86_400_000, RECENT = 6 * 3_600_000;
 const GAP = () => Number(process.env.DISCORD_GAP_MS ?? 1100);   // ritmo de Discord (en pruebas, 0)
 const TZ = "Europe/Madrid";
 
-const money = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toLocaleString("es-ES", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " $";
-const num = (v) => Number(v).toLocaleString("es-ES", { maximumFractionDigits: 2 });
 const hhmm = (ms) => { const p = localParts(ms, TZ); return String(p.hour).padStart(2, "0") + ":" + String(p.minute).padStart(2, "0"); };
-const sideEs = (s) => (s === "Long" ? "largo" : "corto");
 const who = (a) => a.student_name || a.email;
 
-/** Texto en español de un hallazgo de las reglas. */
-export function describe(f) {
-  const d = f.data || {};
-  const where = [f.acct, f.instr ? f.instr.split(" ")[0] : null].filter(Boolean).join(" · ");
-  switch (f.rule) {
-    case "revenge_size": return `Revancha con exceso de contratos: entró ${d.gapSec} s después de cerrar con ${money(d.prevNet)}, con ${num(d.qty)} contratos (lo habitual en él: ${num(d.habitual)}). ${where}`;
-    case "revenge": return `Revancha: entró ${d.gapSec} s después de cerrar con ${money(d.prevNet)}. ${where}`;
-    case "size": return `Exceso de contratos: ${num(d.qty)} contratos; lo habitual en él son ${num(d.habitual)}. ${where}`;
-    case "added": return `Promedió en contra: añadió contratos al ${sideEs(d.side)} con la operación en pérdida. ${where}`;
-    case "stop": return `Stop movido en contra: lo alejó ${num(d.points)} puntos (${num(d.from)} → ${num(d.to)}) con el ${sideEs(d.side)} abierto. ${where}`;
-    case "streak": return `${d.n} pérdidas seguidas hoy (${money(d.sum)}). ${where}`;
-    default: return f.rule;
-  }
-}
 
 // ───────────────────────────────────────────── evaluación tras cada lote
 const timers = new Map();
