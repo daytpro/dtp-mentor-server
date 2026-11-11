@@ -19,6 +19,7 @@ Fase 2: reglas de conducta (revancha, exceso de contratos, promediar en contra, 
 | `GET /admin/students/<email>/summary?from=&to=&tz=` | Base44 | Ficha: estadísticas, curva, horas, instrumentos |
 | `GET /admin/students/<email>/trades?from=&to=` | Base44 | Lista de operaciones |
 | `GET /admin/alerts?since=&email=&limit=` | Base44 | Alertas de conducta y de consentimiento |
+| `POST /admin/names` | Base44 | Nombre de cada alumno (para Discord) |
 | `GET /health` | — | Salud |
 
 - **AddOn:** cabeceras `Authorization: Bearer <token de licencia DTP>` y `X-Machine-Id`. El token lo firma el servidor de licencias; aquí solo se verifica con la **clave pública**.

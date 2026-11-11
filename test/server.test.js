@@ -143,12 +143,40 @@ test("pausa: rechaza; cuenta no compartida: se descarta", { skip }, async () => 
   assert.equal(rows[0].n, 0);
 });
 
-test("retirar: puede pedir el borrado de los datos", { skip }, async () => {
+test("retirar pidiendo el borrado: se borran de verdad los datos; queda el registro de consentimiento", { skip }, async () => {
   const tok = await token();
+  const count = async (sql) => (await pool.query(sql)).rows[0].n;
+  const mine = "(SELECT id FROM accounts WHERE student_id = (SELECT id FROM students WHERE email = 'alumno@prueba.dtp'))";
+  assert.ok(await count(`SELECT count(*)::int AS n FROM executions WHERE account_id IN ${mine}`) > 0);
   const r = await call("POST", "/v1/consent", { tok, body: { state: "revoked", delete_data: true } });
   assert.equal(r.json.state, "revoked");
   assert.equal(r.json.delete_requested, true);
+  assert.equal(r.json.erased, true);
+  assert.equal(await count(`SELECT count(*)::int AS n FROM executions WHERE account_id IN ${mine}`), 0);
+  assert.equal(await count(`SELECT count(*)::int AS n FROM order_events WHERE account_id IN ${mine}`), 0);
+  assert.equal(await count("SELECT count(*)::int AS n FROM accounts a JOIN students s ON s.id = a.student_id WHERE s.email = 'alumno@prueba.dtp'"), 0);
+  assert.equal(await count("SELECT count(*)::int AS n FROM heartbeats h JOIN students s ON s.id = h.student_id WHERE s.email = 'alumno@prueba.dtp'"), 0);
+  // el consentimiento se conserva (prueba de qué aceptó y cuándo lo retiró) y queda marcado el borrado
+  assert.ok(await count("SELECT count(*)::int AS n FROM consents c JOIN students s ON s.id = c.student_id WHERE s.email = 'alumno@prueba.dtp'") >= 2);
+  assert.equal(await count("SELECT count(*)::int AS n FROM consents c JOIN students s ON s.id = c.student_id WHERE s.email = 'alumno@prueba.dtp' AND c.erased_at IS NOT NULL"), 1);
   assert.equal((await call("POST", "/v1/ingest", { tok, body: batch([]) })).json.error, "no_consent");
+  // retirar SIN pedir el borrado no borra nada
+  const tok2 = await token({ sub: "conserva@prueba.dtp" });
+  await call("POST", "/v1/consent", { tok: tok2, body: { state: "accepted", text_version: "1.0", accounts: ["SIM-C"] } });
+  await call("POST", "/v1/ingest", { tok: tok2, body: batch([{ k: "exec", acct: "SIM-C", exec_id: "c1", instr: "MNQ 12-26", side: "Long", qty: 1, price: 1, time: "2026-11-11T10:00:00Z", seq: 1 }]) });
+  const r2 = await call("POST", "/v1/consent", { tok: tok2, body: { state: "revoked", delete_data: false } });
+  assert.equal(r2.json.erased, false);
+  assert.equal(await count("SELECT count(*)::int AS n FROM executions e JOIN accounts a ON a.id = e.account_id WHERE a.name = 'SIM-C'"), 1);
+});
+
+test("nombres: el panel pone el nombre del alumno; solo con el secreto de administración", { skip }, async () => {
+  assert.equal((await call("POST", "/admin/names", { body: { names: { "alumno@prueba.dtp": "Ana" } } })).status, 401);
+  const r = await call("POST", "/admin/names", { admin: ADMIN, body: { names: { "ALUMNO@prueba.dtp": "Ana Pérez", "no-es-email": "X", "conserva@prueba.dtp": "" } } });
+  assert.equal(r.json.changed, 1);
+  const again = await call("POST", "/admin/names", { admin: ADMIN, body: { names: { "alumno@prueba.dtp": "Ana Pérez" } } });
+  assert.equal(again.json.changed, 0);                    // sin cambios, no reescribe
+  const { rows } = await pool.query("SELECT name FROM students WHERE email = 'alumno@prueba.dtp'");
+  assert.equal(rows[0].name, "Ana Pérez");
 });
 
 test("formato exacto del AddOn v1.0.0 (nulos, hora .fffZ, order_ref, pausa con fecha)", { skip }, async () => {

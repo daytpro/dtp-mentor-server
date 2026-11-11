@@ -52,7 +52,7 @@ export async function evaluateStudent(studentId, now = Date.now()) {
 }
 
 /** Pausa, reanudación o retirada: aviso al momento. */
-export async function consentChanged(student, c) {
+export async function consentChanged(student, c, erased = null) {
   let text, rule;
   if (c.state === "paused") {
     rule = "pause";
@@ -60,7 +60,9 @@ export async function consentChanged(student, c) {
     text = `Pausó el envío ${until}. Motivo: «${c.reason}»`;
   } else if (c.state === "revoked") {
     rule = "revoke";
-    text = c.delete_requested ? "Retiró el consentimiento y pidió que se borren sus datos." : "Retiró el consentimiento (conserva sus datos).";
+    text = !c.delete_requested ? "Retiró el consentimiento (conserva sus datos)."
+      : erased ? `Retiró el consentimiento y pidió que se borren sus datos: borrados (${erased.executions} ejecuciones, ${erased.accounts} cuentas).`
+      : "Retiró el consentimiento y pidió que se borren sus datos.";
   } else if (c.state === "accepted") {
     rule = "resume";
     text = `Envío activo. Cuentas: ${(c.accounts || []).join(", ") || "—"}`;

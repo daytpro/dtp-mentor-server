@@ -37,6 +37,46 @@ export async function saveConsent(studentId, { state, text_version, accounts, ma
   return c;
 }
 
+/**
+ * Borrado real de los datos de trading del alumno (RGPD, al retirar pidiendo el borrado).
+ * Se borran cuentas, ejecuciones, órdenes, estado de cuenta, latidos y alertas de conducta.
+ * Se conservan el alumno (email) y su registro de consentimientos, con sus avisos de
+ * pausa/retirada: es la prueba de qué aceptó y cuándo lo retiró.
+ */
+export async function eraseStudentData(studentId, consentId) {
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    const acc = "SELECT id FROM accounts WHERE student_id = $1";
+    const n = {};
+    n.executions = (await db.query(`DELETE FROM executions WHERE account_id IN (${acc})`, [studentId])).rowCount;
+    n.orders = (await db.query(`DELETE FROM order_events WHERE account_id IN (${acc})`, [studentId])).rowCount;
+    await db.query(`DELETE FROM account_state WHERE account_id IN (${acc})`, [studentId]);
+    n.accounts = (await db.query("DELETE FROM accounts WHERE student_id = $1", [studentId])).rowCount;
+    await db.query("DELETE FROM heartbeats WHERE student_id = $1", [studentId]);
+    n.alerts = (await db.query("DELETE FROM alerts WHERE student_id = $1 AND rule NOT IN ('pause','resume','revoke')", [studentId])).rowCount;
+    if (consentId) await db.query("UPDATE consents SET erased_at = now() WHERE id = $1", [consentId]);
+    await db.query("COMMIT");
+    return n;
+  } catch (e) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+/** Nombres de los alumnos (los pone el panel con el nombre de su usuario en la web). */
+export async function setNames(map) {
+  let changed = 0;
+  for (const [email, name] of Object.entries(map)) {
+    const r = await pool.query(
+      "UPDATE students SET name = $2 WHERE lower(email) = lower($1) AND name IS DISTINCT FROM $2", [email, name]);
+    changed += r.rowCount;
+  }
+  return changed;
+}
+
 export async function heartbeat(studentId, { machine_id, session, app_version, queue_len }) {
   await pool.query(
     `INSERT INTO heartbeats (student_id, machine_id, session, app_version, queue_len, last_seen)

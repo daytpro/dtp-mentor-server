@@ -46,6 +46,7 @@ export async function migrate() {
     ALTER TABLE consents ADD COLUMN IF NOT EXISTS reason text;                 -- motivo de la pausa (obligatorio)
     ALTER TABLE consents ADD COLUMN IF NOT EXISTS pause_until timestamptz;    -- null = hasta que la reanude
     ALTER TABLE consents ADD COLUMN IF NOT EXISTS delete_requested boolean NOT NULL DEFAULT false;
+    ALTER TABLE consents ADD COLUMN IF NOT EXISTS erased_at timestamptz;   -- cuándo se borraron de verdad
 
     CREATE TABLE IF NOT EXISTS accounts (
       id          bigserial PRIMARY KEY,

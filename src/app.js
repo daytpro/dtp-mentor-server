@@ -11,6 +11,7 @@
 //    GET  /admin/students/<email>/summary?from=AAAA-MM-DD&to=AAAA-MM-DD&tz=Europe/Madrid
 //    GET  /admin/students/<email>/trades?from=AAAA-MM-DD&to=AAAA-MM-DD
 //    GET  /admin/alerts?since=ISO&email=&limit=
+//    POST /admin/names    { names: { email: nombre } }  (nombre del alumno para Discord)
 //  Salud:  GET /health
 import http from "node:http";
 import zlib from "node:zlib";
@@ -108,7 +109,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.2.1" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.3.0" });
   }
 
   // ───────────────────────────── AddOn
@@ -137,8 +138,11 @@ export async function handle(req, res) {
         state, text_version: text_version || "-", accounts, machine_id: lic.machineId,
         reason: reason || null, pause_until, delete_requested: state === "revoked" && body.delete_data === true,
       });
-      alerts.consentChanged(student, c).catch((e) => console.error("alertas:", e.message));
-      return send(res, 200, { ok: true, state: c.state, accounts: c.accounts, reason: c.reason, pause_until: c.pause_until, delete_requested: c.delete_requested });
+      // retirar pidiendo el borrado: se borra de verdad, al momento
+      let erased = null;
+      if (c.delete_requested) erased = await store.eraseStudentData(student.id, c.id);
+      alerts.consentChanged(student, c, erased).catch((e) => console.error("alertas:", e.message));
+      return send(res, 200, { ok: true, state: c.state, accounts: c.accounts, reason: c.reason, pause_until: c.pause_until, delete_requested: c.delete_requested, erased: !!erased });
     }
 
     if (path === "/v1/heartbeat") {
@@ -170,6 +174,19 @@ export async function handle(req, res) {
   // ───────────────────────────── Base44
   if (path.startsWith("/admin/")) {
     if (!isAdmin(req)) throw new HttpError(401, "unauthorized");
+
+    // única escritura del panel: el nombre de cada alumno, para Discord
+    if (path === "/admin/names") {
+      if (req.method !== "POST") throw new HttpError(405, "method");
+      const body = await readBody(req);
+      const map = {};
+      for (const [email, name] of Object.entries(body && typeof body.names === "object" && body.names ? body.names : {}).slice(0, 200)) {
+        if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) continue;
+        if (typeof name !== "string" || !name.trim() || name.length > 120) continue;
+        map[email.trim()] = name.trim();
+      }
+      return send(res, 200, { ok: true, changed: await store.setNames(map) });
+    }
     if (req.method !== "GET") throw new HttpError(405, "method");
     const tz = validTz(url.searchParams.get("tz") || "Europe/Madrid");
 
