@@ -18,9 +18,11 @@ export function sondaLines() {
   return readFileSync(FIXTURE, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 }
 
-export function sondaEvents() {
+// session: 1 o 2 (la sonda se recompiló a las 07:56 y su numeración volvió a empezar), o todas
+export function sondaEvents(session) {
   const ev = [];
   for (const x of sondaLines()) {
+    if (session && x.session !== session) continue;
     if (x.kind === "exec" || x.kind === "exec_snap0") {
       ev.push({
         k: "exec", acct: x.acct, exec_id: x.exec_id, order_id: x.order_id, instr: x.instr,
@@ -31,7 +33,7 @@ export function sondaEvents() {
       ev.push({
         k: "order", acct: x.acct, order_id: x.order_id, name: x.name, instr: x.instr, type: x.type,
         action: x.action, state: x.state, qty: x.qty, filled: x.filled, limit: x.limit, stop: x.stop,
-        avg_fill: x.avg_fill, time: madridToUtc(x.time), seq: x.seq,
+        avg_fill: x.avg_fill, time: x.rx, seq: x.seq,   // como el AddOn: hora de llegada del evento
       });
     } else if (x.kind === "pnl") {
       ev.push({ k: "pnl", acct: x.acct, realized: x.realized, time: x.rx });

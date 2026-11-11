@@ -40,7 +40,7 @@ before(async () => {
   process.env.MENTOR_ADMIN_SECRET = ADMIN;
   const db = await import("../src/db.js");
   pool = db.pool;
-  await pool.query("DROP TABLE IF EXISTS heartbeats, account_state, order_events, executions, accounts, consents, students, mentors CASCADE");
+  await pool.query("DROP TABLE IF EXISTS alerts, heartbeats, account_state, order_events, executions, accounts, consents, students, mentors CASCADE");
   await db.migrate();
   const { createServer } = await import("../src/app.js");
   server = createServer();
@@ -188,4 +188,73 @@ test("cuadre: sin dato reciente de la cuenta o en pausa → null, nunca un falso
   assert.equal((await get()).reconciled, true);           // dato nuevo: cuadra (−17,5 × 2 = −35)
   await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "prueba de cuadre en pausa" } });
   assert.equal((await get()).reconciled, null);           // en pausa: no se compara
+});
+
+test("fase 2: reglas tras el lote, alertas guardadas, conducta en la ficha y aviso de pausa", { skip }, async () => {
+  const alerts = await import("../src/alerts.js");
+  const tok = await token({ sub: "reglas@prueba.dtp" });
+  await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["SIM-PRUEBA", "RITHMIC-PRUEBA"] } });
+  // datos reales de la sonda, sesión a sesión (cada sesión del AddOn tiene su propia numeración)
+  for (const s of [1, 2]) {
+    const r = await call("POST", "/v1/ingest", { tok, body: { ...batch(sondaEvents(s)), session: "sonda-" + s }, gzip: true });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+  }
+  const { rows: [st] } = await pool.query("SELECT id FROM students WHERE email = 'reglas@prueba.dtp'");
+  // la sonda es del 11 nov a las 07:5x UTC: se evalúa "como si fuera" esa mañana
+  await alerts.evaluateStudent(st.id, Date.parse("2026-11-11T08:10:00Z"));
+  // todas las guardadas (la evaluación automática tras el lote puede haberse adelantado)
+  const { rows: fresh } = await pool.query("SELECT * FROM alerts WHERE student_id = $1", [st.id]);
+  const rules = fresh.map((a) => a.rule).sort();
+  assert.ok(rules.includes("revenge"), rules.join(","));
+  assert.ok(rules.includes("added"));
+  assert.equal(rules.filter((r) => r === "stop").length, 8);   // 1 SIM + 7 RITHMIC
+  assert.ok(fresh.every((a) => a.discord === "hour" || a.discord === "now"), JSON.stringify(fresh.map((a) => [a.rule, a.discord])));
+  const again = await alerts.evaluateStudent(st.id, Date.parse("2026-11-11T08:10:00Z"));
+  assert.equal(again.length, 0);                              // no se repiten
+
+  const stop = fresh.find((a) => a.rule === "stop" && a.acct === "SIM-PRUEBA");
+  assert.match(stop.text, /alejó 8,75 puntos \(28\.224,25 → 28\.233\) con el corto abierto/);
+
+  const sum = await call("GET", "/admin/students/reglas@prueba.dtp/summary?from=2026-11-11&to=2026-11-11", { admin: ADMIN });
+  assert.equal(sum.json.conduct.stop, 8);
+  assert.equal(sum.json.conduct.revenge, 1);
+
+  await call("POST", "/v1/consent", { tok, body: { state: "paused", reason: "Me voy al médico esta tarde" } });
+  await new Promise((r) => setTimeout(r, 100));
+  const list = await call("GET", "/admin/alerts?email=reglas@prueba.dtp&since=2026-11-01T00:00:00Z", { admin: ADMIN });
+  const pause = list.json.alerts.find((a) => a.rule === "pause");
+  assert.ok(pause);
+  assert.match(pause.text, /Motivo: «Me voy al médico esta tarde»/);
+  assert.equal(pause.discord, "now");
+});
+
+test("Discord: lo urgente y las pausas salen al momento; lo importante, en el resumen de la hora en punto", { skip }, async () => {
+  const http = await import("node:http");
+  const got = [];
+  const fake = http.createServer((req, res) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { got.push(JSON.parse(b)); res.writeHead(204); res.end(); }); });
+  await new Promise((r) => fake.listen(0, r));
+  process.env.DISCORD_WEBHOOK_URL = `http://127.0.0.1:${fake.address().port}/hook`;
+  process.env.DISCORD_GAP_MS = "0";
+  const alerts = await import("../src/alerts.js");
+  try {
+    // las 13:00 en Madrid del día de la prueba (la pausa de la prueba anterior está en "now")
+    await pool.query("UPDATE alerts SET at = now() WHERE rule = 'pause'");
+    for (let i = 0; i < 10; i++) await alerts.dispatch(Date.now());   // 5 por vuelta
+    const pause = got.find((m) => m.content.includes("Pausó el envío"));
+    assert.ok(pause, JSON.stringify(got));
+    assert.equal(pause.username, "DTP Mentor");
+    assert.deepEqual(pause.allowed_mentions, { parse: [] });
+
+    await pool.query("UPDATE alerts SET at = now() WHERE discord = 'hour'");
+    const before = got.length;
+    await alerts.dispatch(Date.parse("2026-11-11T12:00:30Z"));        // 13:00 en Madrid
+    const summary = got.slice(before);
+    assert.ok(summary.some((m) => m.content.startsWith("**Resumen de la última hora")), JSON.stringify(summary));
+    const { rows } = await pool.query("SELECT count(*)::int AS n FROM alerts WHERE discord IN ('now','hour')");
+    assert.equal(rows[0].n, 0);                                         // todo enviado
+  } finally {
+    delete process.env.DISCORD_WEBHOOK_URL;
+    delete process.env.DISCORD_GAP_MS;
+    await new Promise((r) => fake.close(r));
+  }
 });

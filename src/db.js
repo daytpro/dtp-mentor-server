@@ -110,6 +110,26 @@ export async function migrate() {
       updated_at   timestamptz NOT NULL DEFAULT now()
     );
 
+    -- Alertas de conducta y de consentimiento (una por hallazgo: student_id + key)
+    CREATE TABLE IF NOT EXISTS alerts (
+      id            bigserial PRIMARY KEY,
+      student_id    bigint NOT NULL REFERENCES students(id),
+      key           text NOT NULL,
+      rule          text NOT NULL,       -- revenge | size | revenge_size | added | stop | streak | pause | revoke | resume
+      level         text NOT NULL,       -- urgent | important | info
+      acct          text,
+      instr         text,
+      at            timestamptz NOT NULL,   -- cuándo pasó
+      text          text NOT NULL,
+      data          jsonb NOT NULL DEFAULT '{}',
+      discord       text NOT NULL,        -- now | hour | none | sent | skipped
+      sent_at       timestamptz,
+      created_at    timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (student_id, key)
+    );
+    CREATE INDEX IF NOT EXISTS alerts_at ON alerts (at DESC);
+    CREATE INDEX IF NOT EXISTS alerts_discord ON alerts (discord) WHERE discord IN ('now', 'hour');
+
     CREATE TABLE IF NOT EXISTS heartbeats (
       student_id   bigint NOT NULL REFERENCES students(id),
       machine_id   text NOT NULL,

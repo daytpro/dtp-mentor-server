@@ -10,6 +10,7 @@
 //    GET  /admin/overview?day=AAAA-MM-DD&tz=Europe/Madrid
 //    GET  /admin/students/<email>/summary?from=AAAA-MM-DD&to=AAAA-MM-DD&tz=Europe/Madrid
 //    GET  /admin/students/<email>/trades?from=AAAA-MM-DD&to=AAAA-MM-DD
+//    GET  /admin/alerts?since=ISO&email=&limit=
 //  Salud:  GET /health
 import http from "node:http";
 import zlib from "node:zlib";
@@ -20,6 +21,8 @@ import { reconstruct } from "./core/trades.js";
 import { summarize } from "./core/stats.js";
 import { tradingDay, addDays, parseUtc } from "./core/time.js";
 import * as store from "./store.js";
+import * as alerts from "./alerts.js";
+import { evaluate, conductCounts } from "./core/rules.js";
 
 const MAX_RAW = 2_000_000, MAX_JSON = 8_000_000;
 const DAY = 86_400_000;
@@ -75,9 +78,11 @@ async function overview(day, tz) {
     const { trades, open, fifo } = await tradesFor(s.id, day, day);
     const accounts = await store.accountStates(s.id);
     const stats = summarize(trades, { tz });
+    const todayAlerts = await store.listAlerts({ sinceMs: Date.now() - DAY, studentId: s.id, limit: 50 });
     out.push({
       email: s.email, name: s.name, consent: s.consent, pause_reason: s.pause_reason, pause_until: s.pause_until, last_seen: s.last_seen, queue_len: s.queue_len,
-      today: { trades: stats.trades, net: stats.net, winRate: stats.winRate, addedAgainst: stats.addedAgainst },
+      today: { trades: stats.trades, net: stats.net, winRate: stats.winRate, addedAgainst: stats.addedAgainst,
+               alerts: todayAlerts.filter((a) => a.level !== "info").length, urgent: todayAlerts.filter((a) => a.level === "urgent").length },
       open,
       accounts: accounts.map((a) => {
         // Cuadre: realizado de la cuenta frente al realizado FIFO de las ejecuciones recibidas.
@@ -94,7 +99,7 @@ async function overview(day, tz) {
       }),
     });
   }
-  return { day, tz, students: out };
+  return { day, tz, students: out, alerts: await store.listAlerts({ sinceMs: Date.now() - DAY, limit: 30 }) };
 }
 
 export async function handle(req, res) {
@@ -103,7 +108,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.1.0" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.2.0" });
   }
 
   // ───────────────────────────── AddOn
@@ -132,6 +137,7 @@ export async function handle(req, res) {
         state, text_version: text_version || "-", accounts, machine_id: lic.machineId,
         reason: reason || null, pause_until, delete_requested: state === "revoked" && body.delete_data === true,
       });
+      alerts.consentChanged(student, c).catch((e) => console.error("alertas:", e.message));
       return send(res, 200, { ok: true, state: c.state, accounts: c.accounts, reason: c.reason, pause_until: c.pause_until, delete_requested: c.delete_requested });
     }
 
@@ -155,6 +161,7 @@ export async function handle(req, res) {
       if (b.error) throw new HttpError(400, b.error);
       b.executions = dedupeExecutions(b.executions);
       const r = await store.ingest(student.id, b);
+      if (r.executions > 0 || r.orders > 0) alerts.schedule(student.id);   // reglas aparte: nunca frenan la ingesta
       return send(res, 200, { ok: true, ...r, rejected: b.errors.length, errors: b.errors.slice(0, 20) });
     }
     throw new HttpError(404, "not_found");
@@ -167,6 +174,15 @@ export async function handle(req, res) {
     const tz = validTz(url.searchParams.get("tz") || "Europe/Madrid");
 
     if (path === "/admin/students") return send(res, 200, { students: await store.listStudents() });
+
+    if (path === "/admin/alerts") {
+      const email = url.searchParams.get("email");
+      const student = email ? await store.findStudent(email) : null;
+      if (email && !student) throw new HttpError(404, "no_student");
+      const since = Date.parse(url.searchParams.get("since") || "") || Date.now() - DAY;
+      const limit = Number(url.searchParams.get("limit")) || 100;
+      return send(res, 200, { alerts: await store.listAlerts({ sinceMs: since, studentId: student ? student.id : null, limit }) });
+    }
 
     if (path === "/admin/overview") {
       const day = isDay(url.searchParams.get("day")) ? url.searchParams.get("day") : tradingDay(Date.now());
@@ -182,7 +198,10 @@ export async function handle(req, res) {
       if (from > to || Date.parse(to) - Date.parse(from) > 400 * DAY) throw new HttpError(400, "bad_range");
       const { trades, open } = await tradesFor(student.id, from, to);
       if (m[2] === "trades") return send(res, 200, { email: student.email, from, to, trades: trades.reverse(), open });
-      return send(res, 200, { email: student.email, from, to, ...summarize(trades, { tz }), open });
+      // conducta del periodo (incluye lo histórico; los stops solo existen desde que hay AddOn)
+      const orders = await store.loadOrders(student.id, Date.parse(from + "T00:00:00Z") - 2 * DAY, Date.parse(to + "T00:00:00Z") + 2 * DAY);
+      const findings = evaluate({ trades, open, orders }).filter((f) => { const d = tradingDay(f.at); return d >= from && d <= to; });
+      return send(res, 200, { email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings) });
     }
     throw new HttpError(404, "not_found");
   }

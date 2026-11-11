@@ -146,6 +146,7 @@ export function reconstruct(executions) {
         acct, instr, side: s.pos > 0 ? "Long" : "Short", qty: Math.abs(s.pos),
         avgEntry: round4(s.tr.entryValue / s.tr.entryQty),
         entryTime: s.tr.entryTime, addedAgainst: s.tr.addedAgainst,
+        maxQty: s.tr.maxQty, origins: [...s.tr.origins].sort(),
       });
     }
   }

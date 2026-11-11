@@ -190,3 +190,52 @@ export async function mentorName(id) {
   const { rows: [m] } = await pool.query("SELECT name FROM mentors WHERE id = $1", [id]);
   return m ? m.name : null;
 }
+
+/** Eventos de órdenes de un alumno en un intervalo, en el formato de las reglas. */
+export async function loadOrders(studentId, fromMs, toMs) {
+  const { rows } = await pool.query(
+    `SELECT a.name AS acct, o.order_ref, o.order_id, o.name, o.instr, o.type, o.action, o.state,
+            o.qty, o.filled, o.limit_price AS limit, o.stop_price AS stop, o.time, o.seq
+       FROM order_events o JOIN accounts a ON a.id = o.account_id
+      WHERE a.student_id = $1 AND o.time >= $2 AND o.time < $3
+      ORDER BY o.time, o.seq`,
+    [studentId, new Date(fromMs), new Date(toMs)]);
+  return rows.map((r) => ({ ...r, time: r.time.getTime(), seq: r.seq == null ? null : Number(r.seq) }));
+}
+
+/** Guarda alertas nuevas (las repetidas se ignoran). Devuelve las que eran nuevas. */
+export async function insertAlerts(studentId, list) {
+  if (!list.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO alerts (student_id, key, rule, level, acct, instr, at, text, data, discord)
+     SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[], $8::text[], $9::jsonb[], $10::text[])
+     ON CONFLICT (student_id, key) DO NOTHING
+     RETURNING *`,
+    [studentId, list.map((a) => a.key), list.map((a) => a.rule), list.map((a) => a.level), list.map((a) => a.acct ?? null),
+     list.map((a) => a.instr ?? null), list.map((a) => new Date(a.at)), list.map((a) => a.text),
+     list.map((a) => JSON.stringify(a.data || {})), list.map((a) => a.discord)]);
+  return rows;
+}
+
+export async function alertsPending(kind) {
+  const { rows } = await pool.query(
+    `SELECT al.*, s.email, s.name AS student_name FROM alerts al JOIN students s ON s.id = al.student_id
+      WHERE al.discord = $1 ORDER BY al.at, al.id LIMIT 200`, [kind]);
+  return rows;
+}
+
+export async function markAlerts(ids, status) {
+  if (!ids.length) return;
+  await pool.query(`UPDATE alerts SET discord = $2, sent_at = CASE WHEN $2 = 'sent' THEN now() ELSE sent_at END WHERE id = ANY($1::bigint[])`, [ids, status]);
+}
+
+export async function listAlerts({ sinceMs, studentId = null, limit = 100 }) {
+  const { rows } = await pool.query(
+    `SELECT al.id, s.email, s.name AS student_name, al.rule, al.level, al.acct, al.instr, al.at, al.text, al.data,
+            al.discord, al.sent_at
+       FROM alerts al JOIN students s ON s.id = al.student_id
+      WHERE al.at >= $1 AND ($2::bigint IS NULL OR al.student_id = $2)
+      ORDER BY al.at DESC LIMIT $3`,
+    [new Date(sinceMs), studentId, Math.min(Math.max(limit, 1), 500)]);
+  return rows;
+}
