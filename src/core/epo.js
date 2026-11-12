@@ -12,21 +12,23 @@
 //    operación de la maestra que empezó a la vez (mismo instrumento y lado).
 
 const LANE = "(AGTINV|AGT|REVINV|REV|ROTINV|ROT|FCONT|CONT|FBE|FB|MOM|ZSF|L2)";
-const ENTRY_RE = new RegExp(`^(${LANE}\\d*_[LS]|E\\d+[LS]|SPE_[LS]|MKT_(BUY|SELL)|MLVE)$`, "i");
+const ENTRY_RE = new RegExp(`^(${LANE}\\d*_[LS]|E\\d+[LS]|SPE_[LS]|MKT_(BUY|SELL)|MLVE|GLE)$`, "i");
 const EXIT_RE = new RegExp(
   `^(${LANE}\\d*_(TP|SL|ABORT)|(TP|SL|RSL)\\d+|Exit|PnL_Exit|PANIC_MKT|PANIC_L\\d+|REDUCE_MKT|REDUCE_L\\d+|OVF_FLAT|` +
-  `MLVTP|MLVSL|MKT_TP|MKT_SL|MKT_RSL|SPE_TP|SPE_SL|SPE_ABORT|FADE_TP|FADE_SL)$`, "i");
+  `MLVTP|MLVSL|MKT_TP|MKT_SL|MKT_RSL|SPE_TP|SPE_SL|SPE_ABORT|FADE_TP|FADE_SL|GLTP|GLSL)$`, "i");
+
+export const GL_SETUP = "Golden Levels";
 
 const SETUPS = [
   [/^AGT/i, "AG.Trend"], [/^REV/i, "Reversal"], [/^ROT/i, "BreakOut"], [/^FCONT/i, "Fade Cont."],
   [/^CONT/i, "Continuation"], [/^FBE?\d*_/i, "Falso rompimiento"], [/^MOM/i, "Momentum"],
   [/^ZSF/i, "Fade ZoneShift"], [/^L2\d*_/i, "L2"], [/^E\d+[LS]$/i, "Niveles"], [/^SPE_/i, "SPE"],
-  [/^MKT_(BUY|SELL)$/i, "Botones"], [/^MLVE$/i, "MLV"],
+  [/^MKT_(BUY|SELL)$/i, "Botones"], [/^MLVE$/i, "MLV"], [/^GLE$/i, GL_SETUP],
 ];
 
 export const isEpoEntry = (name) => !!name && ENTRY_RE.test(String(name).trim());
 export const isEpoExit = (name) => !!name && EXIT_RE.test(String(name).trim());
-/** Entrada que lanza EPO sola (carriles, niveles, SPE, MLV). Los botones MKT_BUY/MKT_SELL los pulsa el alumno. */
+/** Entrada que lanza EPO sola (carriles, niveles, SPE, MLV, Golden Levels: su límite se llena sola en el nivel). Los botones MKT_BUY/MKT_SELL los pulsa el alumno. */
 export const isEpoAuto = (name) => isEpoEntry(name) && !/^MKT_(BUY|SELL)$/i.test(String(name).trim());
 export const isEpoName = (name) => isEpoEntry(name) || isEpoExit(name);
 
@@ -40,6 +42,7 @@ export function epoEntryOfStop(name) {
   if (/^MKT_(SL|RSL)$/i.test(n)) return /^MKT_(BUY|SELL)$/i;
   if (/^SPE_SL$/i.test(n)) return /^SPE_[LS]$/i;
   if (/^MLVSL$/i.test(n)) return /^MLVE$/i;
+  if (/^GLSL$/i.test(n)) return /^GLE$/i;
   return null;
 }
 
@@ -149,6 +152,48 @@ const out = (g) => ({
   avgR: g.rN ? round2(g.rSum / g.rN) : null,
 });
 
+const median = (xs) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
+const timeStats = (ms) => ms.length
+  ? { n: ms.length, avgSec: Math.round(ms.reduce((a, x) => a + x, 0) / ms.length / 1000), medianSec: Math.round(median(ms) / 1000),
+      minSec: Math.round(Math.min(...ms) / 1000), maxSec: Math.round(Math.max(...ms) / 1000) }
+  : { n: 0, avgSec: null, medianSec: null, minSec: null, maxSec: null };
+
+/** Nivel de Golden Levels (26 o 77) a partir de la entrada: los xx26 / xx77 de cada tramo de 100 puntos. */
+export function glLevel(price) {
+  if (!(price > 0)) return null;
+  const m = ((price % 100) + 100) % 100;
+  if (Math.abs(m - 26) <= 3) return "26";
+  if (Math.abs(m - 77) <= 3) return "77";
+  return null;
+}
+
+/**
+ * Golden Levels: resultados, por nivel 26/77, cómo salieron (target, stop u otra) y cuánto tardan
+ * desde la entrada hasta el target (y hasta el stop, para comparar). null si no hay operaciones GL.
+ */
+export function glSummary(closed) {
+  const gl = closed.filter((t) => t.setup === GL_SETUP);
+  if (!gl.length) return null;
+  const all = grp(), lv = { "26": grp(), "77": grp() };
+  const exits = { target: 0, stop: 0, other: 0 };
+  const toT = [], toS = [];
+  for (const t of gl) {
+    add(all, t);
+    const l = glLevel(t.avgEntry);
+    if (l) add(lv[l], t);
+    const x = String(t.exitName || "").toUpperCase();
+    const ms = t.durationMs ?? (t.exitTime - t.entryTime);
+    if (x === "GLTP") { exits.target++; if (ms >= 0) toT.push(ms); }
+    else if (x === "GLSL") { exits.stop++; if (ms >= 0) toS.push(ms); }
+    else exits.other++;
+  }
+  return { ...out(all), byLevel: { "26": out(lv["26"]), "77": out(lv["77"]) }, exits, toTarget: timeStats(toT), toStop: timeStats(toS) };
+}
+
 /** Resumen EPO del periodo (operaciones cerradas y ya anotadas). */
 export function epoSummary(trades, { hasMaster = false } = {}) {
   const closed = trades.filter((t) => t.net != null);
@@ -174,5 +219,6 @@ export function epoSummary(trades, { hasMaster = false } = {}) {
     bySetup: [...setups].map(([setup, g]) => ({ setup, ...out(g) })).sort((a, b) => b.trades - a.trades),
     ratios: Object.fromEntries(Object.entries(ratios).map(([k, g]) => [k, out(g)])),
     hasMaster,
+    gl: glSummary(closed),
   };
 }

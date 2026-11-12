@@ -104,3 +104,27 @@ test("stop movido en contra: el SL de un nivel de EPO aún sin entrar lo mueve E
   assert.equal(stops([o(95, "SL1", "09:00:01"), o(90, "SL1", "09:00:30")]), 1);    // E1 ya dentro: lo alejó el alumno
   assert.equal(stops([o(95, "Stop1", "09:00:01"), o(90, "Stop1", "09:00:30")]), 1);
 });
+
+test("Golden Levels: es EPO, nivel 26/77, salidas y tiempo hasta el target", async () => {
+  const { glSummary, glLevel, epoSummary, isEpoAuto, epoEntryOfStop } = await import("../src/core/epo.js");
+  assert.equal(setupOf("GLE"), "Golden Levels");
+  assert.equal(isEpoAuto("GLE"), true);                        // no cuenta como revancha
+  assert.ok(epoEntryOfStop("GLSL").test("GLE"));
+  assert.equal(glLevel(28226.25), "26");
+  assert.equal(glLevel(28177), "77");
+  assert.equal(glLevel(28250), null);
+  const T = Date.parse("2026-11-12T15:00:00Z");
+  const gl = (entry, net, exitName, sec) => ({ ...originOf({ entryName: "GLE", exitName }), avgEntry: entry, net, exitName,
+    entryTime: T, exitTime: T + sec * 1000, durationMs: sec * 1000 });
+  const trades = [gl(28226, 50, "GLTP", 30), gl(28226, 40, "GLTP", 90), gl(28177, -60, "GLSL", 20), gl(28177, 10, "Close", 300),
+                  { ...originOf({ entryName: "E1L", exitName: "TP1" }), net: 10, entryTime: T, exitTime: T + 1000 }];
+  const s = glSummary(trades);
+  assert.equal(s.trades, 4);
+  assert.equal(s.byLevel["26"].trades, 2);
+  assert.equal(s.byLevel["77"].net, -50);
+  assert.deepEqual(s.exits, { target: 2, stop: 1, other: 1 });
+  assert.deepEqual(s.toTarget, { n: 2, avgSec: 60, medianSec: 60, minSec: 30, maxSec: 90 });
+  assert.equal(s.toStop.medianSec, 20);
+  assert.equal(epoSummary(trades).bySetup.find((x) => x.setup === "Golden Levels").trades, 4);
+  assert.equal(glSummary(trades.slice(4)), null);
+});
