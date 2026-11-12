@@ -126,16 +126,18 @@ export async function ingest(studentId, b) {
     let newExec = 0;
     if (ex.length) {
       const { rows } = await client.query(
-        `INSERT INTO executions (account_id, exec_id, order_ref, order_id, instr, side, qty, price, point_value, time, seq, commission, origin)
+        `INSERT INTO executions (account_id, exec_id, order_ref, order_id, instr, side, qty, price, point_value, time, seq, commission, origin, name)
          SELECT * FROM unnest($1::bigint[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[],
-                              $8::float8[], $9::float8[], $10::timestamptz[], $11::bigint[], $12::float8[], $13::text[])
-         ON CONFLICT (account_id, exec_id) DO UPDATE SET origin = 'live'
-           WHERE executions.origin <> 'live' AND EXCLUDED.origin = 'live'
+                              $8::float8[], $9::float8[], $10::timestamptz[], $11::bigint[], $12::float8[], $13::text[], $14::text[])
+         ON CONFLICT (account_id, exec_id) DO UPDATE
+           SET origin = CASE WHEN executions.origin <> 'live' AND EXCLUDED.origin = 'live' THEN 'live' ELSE executions.origin END,
+               name = COALESCE(executions.name, EXCLUDED.name)
+           WHERE (executions.origin <> 'live' AND EXCLUDED.origin = 'live') OR (executions.name IS NULL AND EXCLUDED.name IS NOT NULL)
          RETURNING (xmax = 0) AS inserted`,
         [ex.map((e) => idOf(e.acct)), ex.map((e) => e.exec_id), ex.map((e) => e.order_ref), ex.map((e) => e.order_id),
          ex.map((e) => e.instr), ex.map((e) => e.side), ex.map((e) => e.qty), ex.map((e) => e.price),
          ex.map((e) => e.point_value), ex.map((e) => new Date(e.time)), ex.map((e) => e.seq),
-         ex.map((e) => e.commission), ex.map((e) => e.origin)]);
+         ex.map((e) => e.commission), ex.map((e) => e.origin), ex.map((e) => e.name ?? null)]);
       newExec = rows.filter((r) => r.inserted).length;
     }
 
@@ -195,8 +197,11 @@ export async function ingest(studentId, b) {
 /** Ejecuciones de un alumno en un intervalo, en el formato del núcleo. */
 export async function loadExecutions(studentId, fromMs, toMs) {
   const { rows } = await pool.query(
-    `SELECT a.name AS acct, e.exec_id, e.order_ref, e.order_id, e.instr, e.side, e.qty, e.price, e.point_value,
-            e.time, e.seq, e.commission, e.origin
+    `SELECT a.name AS acct, a.role, e.exec_id, e.order_ref, e.order_id, e.instr, e.side, e.qty, e.price, e.point_value,
+            e.time, e.seq, e.commission, e.origin,
+            COALESCE(e.name, (SELECT o.name FROM order_events o
+                               WHERE o.account_id = e.account_id AND o.order_ref = e.order_ref AND o.name IS NOT NULL
+                               ORDER BY o.id DESC LIMIT 1)) AS name
        FROM executions e JOIN accounts a ON a.id = e.account_id
       WHERE a.student_id = $1 AND e.time >= $2 AND e.time < $3
       ORDER BY e.time, e.seq`,
@@ -219,11 +224,19 @@ export async function listStudents() {
 
 export async function accountStates(studentId) {
   const { rows } = await pool.query(
-    `SELECT a.name, a.conn, a.provider, st.realized, st.unrealized, st.positions, st.updated_at,
+    `SELECT a.name, a.conn, a.provider, a.role, st.realized, st.unrealized, st.positions, st.updated_at,
             (SELECT max(e.received_at) FROM executions e WHERE e.account_id = a.id) AS last_exec_at
        FROM accounts a LEFT JOIN account_state st ON st.account_id = a.id
       WHERE a.student_id = $1 ORDER BY a.name`, [studentId]);
   return rows;
+}
+
+/** Marca o desmarca una cuenta del alumno como maestra (no cuenta en resultados; de ella salen los TP/SL de EPO). */
+export async function setAccountRole(email, account, role) {
+  const { rowCount } = await pool.query(
+    `UPDATE accounts a SET role = $3 FROM students s
+      WHERE a.student_id = s.id AND lower(s.email) = lower($1) AND a.name = $2`, [email, account, role]);
+  return rowCount;
 }
 
 export async function mentorName(id) {
@@ -234,7 +247,7 @@ export async function mentorName(id) {
 /** Eventos de órdenes de un alumno en un intervalo, en el formato de las reglas. */
 export async function loadOrders(studentId, fromMs, toMs) {
   const { rows } = await pool.query(
-    `SELECT a.name AS acct, o.order_ref, o.order_id, o.name, o.instr, o.type, o.action, o.state,
+    `SELECT a.name AS acct, a.role, o.order_ref, o.order_id, o.name, o.instr, o.type, o.action, o.state,
             o.qty, o.filled, o.limit_price AS limit, o.stop_price AS stop, o.time, o.seq
        FROM order_events o JOIN accounts a ON a.id = o.account_id
       WHERE a.student_id = $1 AND o.time >= $2 AND o.time < $3

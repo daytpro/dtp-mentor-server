@@ -131,6 +131,11 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS alerts_at ON alerts (at DESC);
     CREATE INDEX IF NOT EXISTS alerts_discord ON alerts (discord) WHERE discord IN ('now', 'hour');
 
+    -- 0.5: nombre de la orden en cada ejecución (EPO) y cuenta maestra (la Sim que copia el Replicator)
+    ALTER TABLE executions ADD COLUMN IF NOT EXISTS name text;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'normal';   -- normal | master
+    CREATE INDEX IF NOT EXISTS order_events_ref ON order_events (account_id, order_ref);
+
     CREATE TABLE IF NOT EXISTS heartbeats (
       student_id   bigint NOT NULL REFERENCES students(id),
       machine_id   text NOT NULL,

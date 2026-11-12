@@ -291,3 +291,54 @@ test("Discord: lo urgente y las pausas salen al momento; lo importante, en el re
     await new Promise((r) => fake.close(r));
   }
 });
+
+test("EPO con Replicator: la Sim maestra no cuenta en resultados y da el ratio a la cuenta real", { skip }, async () => {
+  const tok = await token({ sub: "epo@prueba.dtp" });
+  await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["Sim101", "BX-REAL"] } });
+  const at = (s) => `2026-11-12T${s}Z`;
+  let seq = 1;
+  const ex = (acct, name, side, qty, price, t) => ({ k: "exec", acct, exec_id: `${acct}-${seq}`, order_ref: null, order_id: null, instr: "MNQ 12-26",
+    side, qty, price, point_value: 2, time: at(t), seq: seq++, commission: 0, name, origin: "live" });
+  const ord = (name, type, limit, stop, state, t) => ({ k: "order", acct: "Sim101", order_ref: name, order_id: name, name, instr: "MNQ 12-26",
+    type, action: "Sell", state, qty: 1, filled: 0, limit, stop, avg_fill: 0, time: at(t), seq: seq++ });
+  const r = await call("POST", "/v1/ingest", { tok, body: batch([
+    ex("Sim101", "E2L", "Long", 1, 28224.5, "08:03:38"),
+    ord("TP2", "Limit", 28239.5, 0, "Working", "08:03:39"), ord("SL2", "StopMarket", 0, 28199.5, "Working", "08:03:39"),
+    ex("BX-REAL", "E2L", "Long", 1, 28224.0, "08:03:38"),
+    ex("Sim101", "TP2", "Short", 1, 28239.5, "08:12:23"),
+    ex("BX-REAL", "TP2", "Short", 1, 28238.5, "08:12:23"),
+    ex("BX-REAL", "Entry", "Long", 1, 28250, "08:20:00"),
+    ex("BX-REAL", "Close", "Short", 1, 28245, "08:21:00"),
+  ]) });
+  assert.equal(r.json.ok, true);
+
+  // sin marcar la maestra, la Sim cuenta como una cuenta más
+  const q = "?from=2026-11-12&to=2026-11-12";
+  let s = await call("GET", "/admin/students/epo@prueba.dtp/summary" + q, { admin: ADMIN });
+  assert.equal(s.json.trades, 3);
+
+  assert.equal((await call("POST", "/admin/account-role", { body: { email: "epo@prueba.dtp", account: "Sim101", role: "master" } })).status, 401);
+  const mk = await call("POST", "/admin/account-role", { admin: ADMIN, body: { email: "epo@prueba.dtp", account: "Sim101", role: "master" } });
+  assert.equal(mk.json.ok, true);
+  assert.equal((await call("POST", "/admin/account-role", { admin: ADMIN, body: { email: "epo@prueba.dtp", account: "NO-EXISTE", role: "master" } })).status, 404);
+
+  s = await call("GET", "/admin/students/epo@prueba.dtp/summary" + q, { admin: ADMIN });
+  assert.equal(s.json.trades, 2);                          // solo la cuenta real
+  assert.equal(s.json.epo.epo, 1);
+  assert.equal(s.json.epo.manual, 1);
+  assert.equal(s.json.epo.pct, 50);
+  assert.equal(s.json.epo.hasMaster, true);
+  assert.equal(s.json.epo.ratios.positive.trades, 0);
+  assert.equal(s.json.epo.ratios.negative.trades, 1);      // TP +15 / SL −25 en la maestra
+  assert.equal(s.json.conduct.manual, 1);
+  const t = await call("GET", "/admin/students/epo@prueba.dtp/trades" + q, { admin: ADMIN });
+  const epoTrade = t.json.trades.find((x) => x.origin === "epo");
+  assert.equal(epoTrade.setup, "Niveles");
+  assert.equal(epoTrade.ratio, 0.6);
+  assert.equal(epoTrade.ratioFrom, "master");
+  assert.equal(t.json.trades.find((x) => x.origin === "manual").ratioClass, null);
+  const ov = await call("GET", "/admin/overview?day=2026-11-12", { admin: ADMIN });
+  const st = ov.json.students.find((x) => x.email === "epo@prueba.dtp");
+  assert.equal(st.accounts.find((a) => a.name === "Sim101").role, "master");
+  assert.equal(st.today.trades, 2);
+});

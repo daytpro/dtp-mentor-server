@@ -11,6 +11,7 @@
 //    GET  /admin/students/<email>/summary?from=AAAA-MM-DD&to=AAAA-MM-DD&tz=Europe/Madrid
 //    GET  /admin/students/<email>/trades?from=AAAA-MM-DD&to=AAAA-MM-DD
 //    GET  /admin/alerts?since=ISO&email=&limit=
+//    POST /admin/account-role { email, account, role: master|normal }  (cuenta maestra de EPO)
 //    POST /admin/names    { names: { email: nombre } }  (nombre del alumno para Discord)
 //  Salud:  GET /health
 import http from "node:http";
@@ -18,7 +19,8 @@ import zlib from "node:zlib";
 import { pool } from "./db.js";
 import { verifyLicense, isAdmin, AuthError } from "./auth.js";
 import { parseBatch, dedupeExecutions } from "./protocol.js";
-import { reconstruct } from "./core/trades.js";
+import { tradesForDays } from "./load.js";
+import { epoSummary } from "./core/epo.js";
 import { summarize } from "./core/stats.js";
 import { tradingDay, addDays, parseUtc } from "./core/time.js";
 import * as store from "./store.js";
@@ -65,12 +67,7 @@ const isDay = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const validTz = (tz) => { try { new Intl.DateTimeFormat("en", { timeZone: tz }); return tz; } catch { return "Europe/Madrid"; } };
 
 /** Operaciones cerradas cuyo día de sesión está en [from, to], y posiciones abiertas al final. */
-async function tradesFor(studentId, from, to) {
-  // margen de 2 días a cada lado: una operación puede empezar antes del primer día
-  const execs = await store.loadExecutions(studentId, Date.parse(from + "T00:00:00Z") - 2 * DAY, Date.parse(to + "T00:00:00Z") + 2 * DAY);
-  const r = reconstruct(execs);
-  return { ...r, trades: r.trades.filter((t) => t.day >= from && t.day <= to) };
-}
+const tradesFor = tradesForDays;
 
 async function overview(day, tz) {
   const students = await store.listStudents();
@@ -93,7 +90,7 @@ async function overview(day, tz) {
         const fresh = a.realized != null && s.consent === "accepted" &&
           (!a.last_exec_at || (a.updated_at && new Date(a.updated_at) >= new Date(a.last_exec_at)));
         return {
-          name: a.name, conn: a.conn, provider: a.provider, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
+          name: a.name, conn: a.conn, provider: a.provider, role: a.role || "normal", realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
           reconciled: fresh ? Math.abs(fifoR - a.realized) < 0.01 : null,   // null = sin dato reciente
           fifo_realized: fifoR,
         };
@@ -109,7 +106,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.4.1" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.5.0" });
   }
 
   // ───────────────────────────── AddOn
@@ -187,6 +184,20 @@ export async function handle(req, res) {
       }
       return send(res, 200, { ok: true, changed: await store.setNames(map) });
     }
+    // cuenta maestra: la Sim donde corre EPO y que copia el Replicator (no cuenta en resultados)
+    if (path === "/admin/account-role") {
+      if (req.method !== "POST") throw new HttpError(405, "method");
+      const body = await readBody(req);
+      const email = typeof body?.email === "string" ? body.email.trim() : "";
+      const account = typeof body?.account === "string" ? body.account.trim() : "";
+      const role = body?.role === "master" ? "master" : body?.role === "normal" ? "normal" : null;
+      if (!email || !account || account.length > 120 || !role) throw new HttpError(400, "bad_params");
+      const changed = await store.setAccountRole(email, account, role);
+      if (!changed) throw new HttpError(404, "no_account");
+      const student = await store.findStudent(email);
+      if (student) alerts.schedule(student.id);
+      return send(res, 200, { ok: true, email, account, role });
+    }
     if (req.method !== "GET") throw new HttpError(405, "method");
     const tz = validTz(url.searchParams.get("tz") || "Europe/Madrid");
 
@@ -213,19 +224,19 @@ export async function handle(req, res) {
       const to = isDay(url.searchParams.get("to")) ? url.searchParams.get("to") : tradingDay(Date.now());
       const from = isDay(url.searchParams.get("from")) ? url.searchParams.get("from") : addDays(to, -29);
       if (from > to || Date.parse(to) - Date.parse(from) > 400 * DAY) throw new HttpError(400, "bad_range");
-      const { trades, open } = await tradesFor(student.id, from, to);
-      if (m[2] === "trades") return send(res, 200, { email: student.email, from, to, trades: trades.reverse(), open });
+      const { trades, open, orders, hasMaster } = await tradesFor(student.id, from, to);
+      if (m[2] === "trades") return send(res, 200, { email: student.email, from, to, trades: [...trades].reverse(), open });
       // conducta del periodo (incluye lo histórico; los stops solo existen desde que hay AddOn)
-      const orders = await store.loadOrders(student.id, Date.parse(from + "T00:00:00Z") - 2 * DAY, Date.parse(to + "T00:00:00Z") + 2 * DAY);
       const findings = evaluate({ trades, open, orders }).filter((f) => { const d = tradingDay(f.at); return d >= from && d <= to; });
       // acierto del grupo en el mismo periodo (para comparar)
       let gw = 0, gn = 0;
       for (const o of await store.listStudents()) {
-        const r = o.id === student.id ? { trades } : await tradesFor(o.id, from, to);
+        const r = o.id === student.id ? { trades } : await tradesFor(o.id, from, to, { withOrders: false });
         for (const t of r.trades) if (t.net != null) { gn++; if (t.net > 0) gw++; }
       }
       return send(res, 200, {
         email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings),
+        epo: epoSummary(trades, { hasMaster }),
         since: student.created_at, mentor: await store.mentorName(student.mentor_id), groupWinRate: gn ? Math.round((gw / gn) * 10000) / 100 : null, groupTrades: gn,
       });
     }

@@ -21,6 +21,7 @@ export function describe(f) {
       return `Promedió en contra: pasó de ${num(d.from)} a ${num(d.to)} contratos al ${sideEs(d.side)} con la operación en pérdida${loss ? ` (${loss})` : ""}. ${where}`;
     }
     case "stop": return `Stop movido en contra: lo alejó ${signed(d.points)} puntos (${num(d.from)} → ${num(d.to)}) con el ${sideEs(d.side)} abierto. ${where}`;
+    case "manual": return `Fuera de EPO: abrió a mano un ${sideEs(d.side)} de ${num(d.qty)} contrato${d.qty === 1 ? "" : "s"} (orden «${d.name}»). ${where}`;
     case "streak": return `${d.n} pérdidas seguidas hoy (${money(d.sum)}). ${where}`;
     default: return f.rule;
   }

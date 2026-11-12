@@ -7,7 +7,8 @@
 //   size          Exceso de contratos: más de SIZE_FACTOR × su tamaño habitual
 //                 (mediana de sus últimas 20 operaciones; hacen falta 5).
 //   revenge_size  Las dos a la vez en la misma operación → URGENTE (sustituye a las dos).
-//   added         Promediar en contra: añade contratos con la operación en pérdida.
+//   added         Promediar en contra: añade contratos con la operación en pérdida (los niveles de EPO no cuentan).
+//   manual        Fuera de EPO: la abrió a mano (solo si el alumno usa EPO). Aviso, solo en el panel.
 //   stop          Stop movido en contra: con posición abierta, el stop de protección
 //                 se aleja (más riesgo).
 //   streak        STREAK_N pérdidas seguidas en el mismo día de sesión.
@@ -15,6 +16,8 @@
 // Cada hallazgo: { rule, level, key, acct, instr, at (ms UTC), live, data }
 //   key: identifica el hallazgo para no repetir el aviso (igual con la operación abierta o cerrada).
 //   live: viene de datos en directo (lo histórico/recuperado/importado nunca avisa).
+
+import { isEpoEntry, epoEntryOfStop } from "./epo.js";
 
 export const DEFAULTS = { REVENGE_SEC: 120, SIZE_FACTOR: 2, SIZE_BASE: 20, SIZE_MIN: 5, STREAK_N: 3 };
 
@@ -38,6 +41,9 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
     if (!byAcct.has(t.acct)) byAcct.set(t.acct, []);
     byAcct.get(t.acct).push(t);
   }
+
+  // «Fuera de EPO» solo tiene sentido si el alumno usa EPO (alguna operación suya la abrió EPO)
+  const usesEpo = items.some((t) => isEpoEntry(t.entryName));
 
   for (const [acct, list] of byAcct) {
     const closed = list.filter((t) => t.closed).sort((a, b) => a.exitTime - b.exitTime);
@@ -68,6 +74,8 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
       }
       if (t.addedAgainst) out.push({ ...base, rule: "added", level: "important", key: key("added"),
         data: { side: t.side, qty: t.qty, avgEntry: t.avgEntry, ...(t.added || {}) } });
+      if (usesEpo && t.entryName && !isEpoEntry(t.entryName)) out.push({ ...base, rule: "manual", level: "info", key: key("manual"),
+        data: { side: t.side, qty: t.qty, name: t.entryName } });
     }
 
     // rachas de pérdidas por día de sesión (un aviso al llegar a N)
@@ -89,9 +97,16 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
   const positionAt = (acct, instr, time) => {
     for (const t of byAcct.get(acct) || []) {
       if (t.instr !== instr || t.entryTime > time) continue;
-      if (!t.closed || t.exitTime >= time) return t.side;
+      if (!t.closed || t.exitTime >= time) return t;
     }
     return null;
+  };
+  // EPO mueve el SL de un nivel mientras su entrada sigue pendiente (lo sincroniza con el rango).
+  // Ese movimiento es de EPO, no del alumno: solo cuenta cuando la entrada de ese SL ya se ejecutó.
+  const epoStopPending = (o, t) => {
+    const entryRe = epoEntryOfStop(o.name);
+    if (!entryRe || !(t.entryNames || []).length) return false;   // sin nombres (datos antiguos): no se puede saber
+    return !(t.entryNames || []).some((e) => e.time <= o.time && entryRe.test(e.name));
   };
   const lastStop = new Map();
   const seen = new Set();   // un ATM con varios stops iguales movidos a la vez = un solo hallazgo
@@ -102,8 +117,10 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
     const old = lastStop.get(k);
     lastStop.set(k, o.stop);
     if (old == null || old === o.stop) continue;
-    const side = positionAt(o.acct, o.instr, o.time);
-    if (!side) continue;
+    const pos = positionAt(o.acct, o.instr, o.time);
+    if (!pos) continue;
+    if (epoStopPending(o, pos)) continue;
+    const side = pos.side;
     const against = (side === "Long" && SELL.has(o.action) && o.stop < old) || (side === "Short" && BUY.has(o.action) && o.stop > old);
     if (!against) continue;
     const key = `stop|${o.acct}|${o.instr}|${old}|${o.stop}|${Math.floor(o.time / 2000)}`;
@@ -118,7 +135,7 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
 
 /** Cuenta los hallazgos por regla (para la ficha del alumno). */
 export function conductCounts(findings) {
-  const c = { revenge: 0, size: 0, revenge_size: 0, added: 0, stop: 0, streak: 0 };
+  const c = { revenge: 0, size: 0, revenge_size: 0, added: 0, stop: 0, streak: 0, manual: 0 };
   for (const f of findings) c[f.rule] = (c[f.rule] || 0) + 1;
   return c;
 }

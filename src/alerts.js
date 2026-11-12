@@ -10,7 +10,7 @@
 //
 // Variables: DISCORD_WEBHOOK_URL (todas) y, opcional, DISCORD_WEBHOOK_URGENT (solo urgentes y consentimiento).
 import * as store from "./store.js";
-import { reconstruct } from "./core/trades.js";
+import { studentTrades } from "./load.js";
 import { evaluate } from "./core/rules.js";
 import { localParts } from "./core/time.js";
 import { describe, untilText } from "./core/describe.js";
@@ -41,12 +41,11 @@ export function schedule(studentId, delayMs = 3000) {
 
 export async function evaluateStudent(studentId, now = Date.now()) {
   // 35 días de ejecuciones: el tamaño habitual necesita las últimas 20 operaciones
-  const execs = await store.loadExecutions(studentId, now - 35 * DAY, now + DAY);
-  const orders = await store.loadOrders(studentId, now - DAY, now + DAY);
-  const { trades, open } = reconstruct(execs);
+  // 35 días de operaciones (sin cuentas maestras); las órdenes de esas operaciones también
+  const { trades, open, orders } = await studentTrades(studentId, now - 35 * DAY, now + DAY);
   const findings = evaluate({ trades, open, orders }).filter((f) => f.live && f.at >= now - RECENT);
   const rows = findings.map((f) => ({
-    ...f, text: describe(f), discord: f.level === "urgent" ? "now" : "hour",
+    ...f, text: describe(f), discord: f.level === "urgent" ? "now" : f.level === "info" ? "none" : "hour",
   }));
   return store.insertAlerts(studentId, rows);
 }

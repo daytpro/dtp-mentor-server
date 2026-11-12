@@ -19,6 +19,7 @@
 
 import { pointValue } from "./instruments.js";
 import { tradingDay } from "./time.js";
+import { isEpoName } from "./epo.js";
 
 const round2 = (v) => Math.round(v * 100) / 100;
 const round4 = (v) => Math.round(v * 10000) / 10000;
@@ -40,6 +41,8 @@ function newTrade(x, dir, pv) {
     addedAgainst: false,   // añadió contratos con la operación en pérdida
     added: null,           // la primera vez: { from, to, points, usd } (pérdida abierta en ese momento)
     origins: new Set(), execIds: [],
+    entryName: null, exitName: null,   // nombre de la orden de la primera entrada y de la última salida
+    entryNames: [],                    // { name, time } de cada entrada (para saber qué nivel de EPO ya entró)
   };
 }
 
@@ -47,8 +50,8 @@ function apply(tr, x, signedQty, isEntry) {
   const q = Math.abs(signedQty);
   if (signedQty > 0) { tr.buyQty += q; tr.buyValue += q * x.price; }
   else { tr.sellQty += q; tr.sellValue += q * x.price; }
-  if (isEntry) { tr.entryQty += q; tr.entryValue += q * x.price; tr.entries++; }
-  else { tr.exitQty += q; tr.exitValue += q * x.price; tr.exits++; }
+  if (isEntry) { tr.entryQty += q; tr.entryValue += q * x.price; tr.entries++; if (!tr.entryName && x.name) tr.entryName = x.name; if (x.name) tr.entryNames.push({ name: x.name, time: x.time }); }
+  else { tr.exitQty += q; tr.exitValue += q * x.price; tr.exits++; if (x.name) tr.exitName = x.name; }
   tr.origins.add(x.origin || "live");
   tr.execIds.push(x.exec_id);
 }
@@ -71,6 +74,7 @@ function finish(tr, x) {
     addedAgainst: tr.addedAgainst, added: tr.added,
     origins: [...tr.origins].sort(),
     execIds: tr.execIds,
+    entryName: tr.entryName, exitName: tr.exitName, entryNames: tr.entryNames,
   };
 }
 
@@ -117,7 +121,8 @@ export function reconstruct(executions) {
       if (sameDir) {
         if (s.pos !== 0) {
           const avg = tr.entryValue / tr.entryQty;
-          if ((s.pos > 0 && x.price < avg) || (s.pos < 0 && x.price > avg)) {
+          // los niveles de EPO (E2, E3…) entran más abajo a propósito: eso no es «promediar en contra»
+          if (((s.pos > 0 && x.price < avg) || (s.pos < 0 && x.price > avg)) && !isEpoName(x.name)) {
             tr.addedAgainst = true;
             if (!tr.added) {
               const pts = (x.price - avg) * Math.sign(s.pos);
@@ -158,6 +163,7 @@ export function reconstruct(executions) {
         avgEntry: round4(s.tr.entryValue / s.tr.entryQty),
         entryTime: s.tr.entryTime, addedAgainst: s.tr.addedAgainst, added: s.tr.added,
         maxQty: s.tr.maxQty, origins: [...s.tr.origins].sort(),
+        entryName: s.tr.entryName, entryNames: s.tr.entryNames,
       });
     }
   }

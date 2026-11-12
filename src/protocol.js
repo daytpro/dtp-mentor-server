@@ -74,6 +74,7 @@ export function parseBatch(body) {
           acct, exec_id, instr, side: e.side, qty, price, time,
           order_ref: optStr(e.order_ref, 120), order_id: optStr(e.order_id, 120),
           point_value: optNum(e.point_value), seq: optNum(e.seq), commission: optNum(e.commission) ?? 0,
+          name: optStr(e.name, 80),           // nombre de la orden (EPO: «AGT_L», «E2L», «TP2»…); desde el AddOn 1.0.2
           origin,
         });
         return;
@@ -118,7 +119,8 @@ export function dedupeExecutions(execs) {
   for (const x of execs) {
     const k = x.acct + "\u0000" + x.exec_id;
     const prev = m.get(k);
-    if (!prev || (prev.origin !== "live" && x.origin === "live")) m.set(k, x);
+    if (!prev || (prev.origin !== "live" && x.origin === "live")) m.set(k, { ...x, name: x.name ?? prev?.name ?? null });
+    else if (!prev.name && x.name) prev.name = x.name;
   }
   return [...m.values()];
 }
