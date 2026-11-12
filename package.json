@@ -1,6 +1,6 @@
 {
   "name": "dtp-mentor-server",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "description": "DTP Mentor — servidor de seguimiento de alumnos (© Josué Morales Carmona · DayTraderProfesional)",
   "type": "module",

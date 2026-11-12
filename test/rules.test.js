@@ -65,6 +65,15 @@ test("revancha: no si pasaron 2 minutos o si la anterior fue ganadora", () => {
   assert.equal(evaluate(reconstruct([...round(1, true, 0), ...round(1, true, 40)])).filter((x) => x.rule === "revenge").length, 0);
 });
 
+test("revancha: las entradas que lanza EPO sola no cuentan; las de sus botones sí", () => {
+  const named = (name, win, startSec) => [ex("Long", 1, 100, startSec, { name }), ex("Short", 1, win ? 101 : 99, startSec + 30, { name: "TP1" })];
+  const rev = (name) => evaluate(reconstruct([...named("E1L", false, 0), ...named(name, true, 60)])).filter((x) => x.rule === "revenge").length;
+  assert.equal(rev("E2L"), 0);        // nivel de EPO
+  assert.equal(rev("AGT_L"), 0);      // carril de EPO
+  assert.equal(rev("MKT_BUY"), 1);    // botón de EPO: lo pulsa el alumno
+  assert.equal(rev("Entry"), 1);      // a mano
+});
+
 test("3 pérdidas seguidas en el día: un aviso", () => {
   const execs = [...round(1, false, 0), ...round(1, false, 600), ...round(1, false, 1200), ...round(1, false, 1800)];
   const s = evaluate(reconstruct(execs)).filter((x) => x.rule === "streak");

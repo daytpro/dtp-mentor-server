@@ -26,6 +26,8 @@ const SETUPS = [
 
 export const isEpoEntry = (name) => !!name && ENTRY_RE.test(String(name).trim());
 export const isEpoExit = (name) => !!name && EXIT_RE.test(String(name).trim());
+/** Entrada que lanza EPO sola (carriles, niveles, SPE, MLV). Los botones MKT_BUY/MKT_SELL los pulsa el alumno. */
+export const isEpoAuto = (name) => isEpoEntry(name) && !/^MKT_(BUY|SELL)$/i.test(String(name).trim());
 export const isEpoName = (name) => isEpoEntry(name) || isEpoExit(name);
 
 /** Para un SL de EPO, la expresión de su entrada: «SL2» → E2L/E2S, «AGT2_SL» → AGT2_L/_S. null si no es de EPO. */

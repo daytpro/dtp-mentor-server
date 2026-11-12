@@ -3,7 +3,8 @@
 // Reglas de conducta (funciones puras). Sin plan del alumno: todas comparan al
 // alumno consigo mismo o son malas en cualquier plan.
 //
-//   revenge       Revancha: entra menos de REVENGE_SEC después de cerrar en pérdida.
+//   revenge       Revancha: entra menos de REVENGE_SEC después de cerrar en pérdida. Las entradas que
+//                 lanza EPO sola (carriles, niveles…) no cuentan; las de sus botones sí.
 //   size          Exceso de contratos: más de SIZE_FACTOR × su tamaño habitual
 //                 (mediana de sus últimas 20 operaciones; hacen falta 5).
 //   revenge_size  Las dos a la vez en la misma operación → URGENTE (sustituye a las dos).
@@ -17,7 +18,7 @@
 //   key: identifica el hallazgo para no repetir el aviso (igual con la operación abierta o cerrada).
 //   live: viene de datos en directo (lo histórico/recuperado/importado nunca avisa).
 
-import { isEpoEntry, epoEntryOfStop } from "./epo.js";
+import { isEpoEntry, isEpoAuto, epoEntryOfStop } from "./epo.js";
 
 export const DEFAULTS = { REVENGE_SEC: 120, SIZE_FACTOR: 2, SIZE_BASE: 20, SIZE_MIN: 5, STREAK_N: 3 };
 
@@ -55,7 +56,7 @@ export function evaluate({ trades = [], open = [], orders = [] }, cfg = DEFAULTS
       // revancha: la última operación cerrada antes de esta entrada, si fue pérdida y hace poco
       const prev = closed.filter((p) => p.exitTime <= t.entryTime && p !== t).at(-1);
       const gapSec = prev ? (t.entryTime - prev.exitTime) / 1000 : Infinity;
-      const revenge = prev && prev.net != null && prev.net < 0 && gapSec < cfg.REVENGE_SEC;
+      const revenge = prev && prev.net != null && prev.net < 0 && gapSec < cfg.REVENGE_SEC && !isEpoAuto(t.entryName);
 
       // tamaño frente a su propia costumbre
       const history = closed.filter((p) => p.exitTime <= t.entryTime).slice(-cfg.SIZE_BASE);
