@@ -11,6 +11,7 @@
 // Variables: DISCORD_WEBHOOK_URL (todas) y, opcional, DISCORD_WEBHOOK_URGENT (solo urgentes y consentimiento).
 import * as store from "./store.js";
 import { studentTrades } from "./load.js";
+import { streakFindings } from "./core/streaks.js";
 import { evaluate } from "./core/rules.js";
 import { localParts } from "./core/time.js";
 import { describe, untilText } from "./core/describe.js";
@@ -43,7 +44,10 @@ export async function evaluateStudent(studentId, now = Date.now()) {
   // 35 días de ejecuciones: el tamaño habitual necesita las últimas 20 operaciones
   // 35 días de operaciones (sin cuentas maestras); las órdenes de esas operaciones también
   const { trades, open, orders } = await studentTrades(studentId, now - 35 * DAY, now + DAY);
-  const findings = evaluate({ trades, open, orders }).filter((f) => f.live && f.at >= now - RECENT);
+  // rachas: su historial de 180 días para saber si la racha perdedora en curso es normal en él
+  const history = await studentTrades(studentId, now - 180 * DAY, now + DAY, { withOrders: false });
+  const findings = [...evaluate({ trades, open, orders }), ...streakFindings(history.trades)]
+    .filter((f) => f.live && f.at >= now - RECENT);
   const rows = findings.map((f) => ({
     ...f, text: describe(f), discord: f.level === "urgent" ? "now" : f.level === "info" ? "none" : "hour",
   }));

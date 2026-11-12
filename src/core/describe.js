@@ -22,6 +22,11 @@ export function describe(f) {
     }
     case "stop": return `Stop movido en contra: lo alejó ${signed(d.points)} puntos (${num(d.from)} → ${num(d.to)}) con el ${sideEs(d.side)} abierto. ${where}`;
     case "manual": return `Fuera de EPO: abrió a mano un ${sideEs(d.side)} de ${num(d.qty)} contrato${d.qty === 1 ? "" : "s"} (orden «${d.name}»). ${where}`;
+    case "streak_out": {
+      const scope = d.scope === "session" ? "en la sesión" : "seguidas";
+      const why = d.level === "record" ? `nunca había tenido una tan larga (su máximo era ${num(d.max)})` : `solo el ${num(d.reach)} % de sus rachas perdedoras llega a ${num(d.len)}`;
+      return `Racha perdedora fuera de lo normal: ${num(d.len)} pérdidas ${scope} (${money(d.net)}); ${why}. ${where}`;
+    }
     case "streak": return `${d.n} pérdidas seguidas hoy (${money(d.sum)}). ${where}`;
     default: return f.rule;
   }

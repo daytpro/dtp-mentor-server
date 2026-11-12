@@ -40,3 +40,23 @@ test("qué pasa después: acierto, contratos y ratio de la siguiente", () => {
   assert.equal(s.maxLoss.len, 3);
   assert.equal(s.perSession.L.max, 3);
 });
+
+test("aviso: racha perdedora fuera de lo normal para ese alumno (una vez por racha)", async () => {
+  const { streakFindings } = await import("../src/core/streaks.js");
+  const { describe } = await import("../src/core/describe.js");
+  const hist = [];
+  // 12 rachas perdedoras de 1 (alternando con ganadoras) y luego 3 pérdidas seguidas en directo
+  for (let k = 0; k < 12; k++) { hist.push(tr("2026-11-0" + (1 + (k % 9)), 20)); hist.push(tr("2026-11-0" + (1 + (k % 9)), -10)); }
+  hist.push(tr("2026-11-12", 20));
+  const live = { origins: ["live"], acct: "BX", instr: "MNQ 12-26" };
+  hist.push(tr("2026-11-12", -10, live));
+  assert.equal(streakFindings(hist).length, 0);              // 1 pérdida: normal
+  hist.push(tr("2026-11-12", -10, live));
+  const f = streakFindings(hist);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].data.level, "record");                   // nunca había perdido 2 seguidas
+  assert.equal(f[0].live, true);
+  assert.match(describe(f[0]), /^Racha perdedora fuera de lo normal: 2 pérdidas seguidas/);
+  hist.push(tr("2026-11-12", 15, live));
+  assert.equal(streakFindings(hist).length, 0);              // la racha ya se cortó
+});

@@ -141,3 +141,31 @@ export function streakSummary(periodTrades, historyTrades, today) {
     after: afterStreaks(periodTrades),
   };
 }
+
+/**
+ * Aviso «Racha perdedora fuera de lo normal»: la racha perdedora en curso (global o de la sesión)
+ * es fuera de lo normal o récord para ese alumno. Una vez por racha y nivel.
+ * @returns hallazgos con el formato de rules.evaluate
+ */
+export function streakFindings(historyTrades) {
+  const out = [];
+  const seq = sequence(historyTrades);
+  const last = seq[seq.length - 1];
+  if (!last || last.net >= 0) return out;
+  const live = Array.isArray(last.origins) && last.origins.includes("live");
+  for (const scope of ["global", "session"]) {
+    const runs = runsOf(historyTrades, { bySession: scope === "session" });
+    const cur = runs[runs.length - 1];
+    if (!cur || cur.kind !== "L" || cur.len < 2) continue;
+    const prev = runs.slice(0, -1);                 // se compara con su historial, sin la racha en curso
+    const n = normality("L", cur.len, prev);
+    if (n.level !== "out" && n.level !== "record") continue;
+    out.push({
+      rule: "streak_out", level: "important", acct: last.acct, instr: last.instr, at: last.exitTime, live,
+      key: `streak_out|${scope}|${cur.from}|${n.level}`,
+      data: { scope, len: cur.len, net: cur.net, level: n.level, reach: n.reach, max: n.max },
+    });
+    break;                                           // con un aviso por racha basta (primero el global)
+  }
+  return out;
+}
