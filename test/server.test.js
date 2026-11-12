@@ -342,3 +342,27 @@ test("EPO con Replicator: la Sim maestra no cuenta en resultados y da el ratio a
   assert.equal(st.accounts.find((a) => a.name === "Sim101").role, "master");
   assert.equal(st.today.trades, 2);
 });
+
+test("cuenta que ya no comparte: sin cuadre; «No contar» la saca de resultados sin borrar nada", { skip }, async () => {
+  const tok = await token({ sub: "epo@prueba.dtp" });
+  // deja de compartir BX-REAL (solo la Sim maestra)
+  await call("POST", "/v1/consent", { tok, body: { state: "accepted", text_version: "1.0", accounts: ["Sim101"] } });
+  let ov = await call("GET", "/admin/overview?day=2026-11-12", { admin: ADMIN });
+  let st = ov.json.students.find((x) => x.email === "epo@prueba.dtp");
+  const bx = st.accounts.find((a) => a.name === "BX-REAL");
+  assert.equal(bx.shared, false);
+  assert.equal(bx.reconciled, null);                       // nunca un falso «no coincide»
+  assert.equal(st.today.trades, 2);                        // su historial sigue contando
+
+  const r = await call("POST", "/admin/account-role", { admin: ADMIN, body: { email: "epo@prueba.dtp", account: "BX-REAL", role: "excluded" } });
+  assert.equal(r.json.role, "excluded");
+  ov = await call("GET", "/admin/overview?day=2026-11-12", { admin: ADMIN });
+  st = ov.json.students.find((x) => x.email === "epo@prueba.dtp");
+  assert.equal(st.today.trades, 0);
+  assert.equal(st.accounts.find((a) => a.name === "BX-REAL").role, "excluded");
+  const { rows } = await pool.query("SELECT count(*)::int AS n FROM executions e JOIN accounts a ON a.id = e.account_id WHERE a.name = 'BX-REAL'");
+  assert.equal(rows[0].n, 4);                              // no se borra nada
+  await call("POST", "/admin/account-role", { admin: ADMIN, body: { email: "epo@prueba.dtp", account: "BX-REAL", role: "normal" } });
+  ov = await call("GET", "/admin/overview?day=2026-11-12", { admin: ADMIN });
+  assert.equal(ov.json.students.find((x) => x.email === "epo@prueba.dtp").today.trades, 2);
+});

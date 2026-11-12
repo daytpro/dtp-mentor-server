@@ -11,7 +11,7 @@
 //    GET  /admin/students/<email>/summary?from=AAAA-MM-DD&to=AAAA-MM-DD&tz=Europe/Madrid
 //    GET  /admin/students/<email>/trades?from=AAAA-MM-DD&to=AAAA-MM-DD
 //    GET  /admin/alerts?since=ISO&email=&limit=
-//    POST /admin/account-role { email, account, role: master|normal }  (cuenta maestra de EPO)
+//    POST /admin/account-role { email, account, role: normal|master|excluded }  (maestra de EPO / no contar)
 //    POST /admin/names    { names: { email: nombre } }  (nombre del alumno para Discord)
 //  Salud:  GET /health
 import http from "node:http";
@@ -75,6 +75,7 @@ async function overview(day, tz) {
   for (const s of students) {
     const { trades, open, fifo } = await tradesFor(s.id, day, day);
     const accounts = await store.accountStates(s.id);
+    const sharedNow = new Set(Array.isArray(s.shared_accounts) ? s.shared_accounts : []);
     const stats = summarize(trades, { tz });
     const todayAlerts = await store.listAlerts({ sinceMs: Date.now() - DAY, studentId: s.id, limit: 50 });
     out.push({
@@ -87,10 +88,14 @@ async function overview(day, tz) {
         // Solo se compara con un dato de la cuenta POSTERIOR a la última ejecución recibida y con el
         // alumno enviando; si no, el realizado puede ser de antes del cierre (p. ej. pausó justo después).
         const fifoR = fifo.get(a.name + "|" + day) || 0;
-        const fresh = a.realized != null && s.consent === "accepted" &&
-          (!a.last_exec_at || (a.updated_at && new Date(a.updated_at) >= new Date(a.last_exec_at)));
+        // y solo con cuentas que sigue compartiendo y un dato de la cuenta del mismo día de sesión
+        // (de una cuenta que ya no comparte, el último dato es de otro día: daría un falso «no coincide»)
+        const shared = sharedNow.has(a.name);
+        const fresh = a.realized != null && s.consent === "accepted" && shared &&
+          (a.pnl_at || a.updated_at) && tradingDay(new Date(a.pnl_at || a.updated_at).getTime()) === day &&
+          (!a.last_exec_at || new Date(a.updated_at) >= new Date(a.last_exec_at));
         return {
-          name: a.name, conn: a.conn, provider: a.provider, role: a.role || "normal", realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
+          name: a.name, conn: a.conn, provider: a.provider, role: a.role || "normal", shared, realized: a.realized, unrealized: a.unrealized, updated_at: a.updated_at,
           reconciled: fresh ? Math.abs(fifoR - a.realized) < 0.01 : null,   // null = sin dato reciente
           fifo_realized: fifoR,
         };
@@ -106,7 +111,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.5.0" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.5.1" });
   }
 
   // ───────────────────────────── AddOn
@@ -190,7 +195,7 @@ export async function handle(req, res) {
       const body = await readBody(req);
       const email = typeof body?.email === "string" ? body.email.trim() : "";
       const account = typeof body?.account === "string" ? body.account.trim() : "";
-      const role = body?.role === "master" ? "master" : body?.role === "normal" ? "normal" : null;
+      const role = ["normal", "master", "excluded"].includes(body?.role) ? body.role : null;
       if (!email || !account || account.length > 120 || !role) throw new HttpError(400, "bad_params");
       const changed = await store.setAccountRole(email, account, role);
       if (!changed) throw new HttpError(404, "no_account");

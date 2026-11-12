@@ -133,8 +133,9 @@ export async function migrate() {
 
     -- 0.5: nombre de la orden en cada ejecución (EPO) y cuenta maestra (la Sim que copia el Replicator)
     ALTER TABLE executions ADD COLUMN IF NOT EXISTS name text;
-    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'normal';   -- normal | master
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'normal';   -- normal | master | excluded
     CREATE INDEX IF NOT EXISTS order_events_ref ON order_events (account_id, order_ref);
+    ALTER TABLE account_state ADD COLUMN IF NOT EXISTS pnl_at timestamptz;   -- cuándo dio NinjaTrader ese realizado
 
     CREATE TABLE IF NOT EXISTS heartbeats (
       student_id   bigint NOT NULL REFERENCES students(id),

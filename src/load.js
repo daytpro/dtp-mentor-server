@@ -15,8 +15,10 @@ const DAY = 86_400_000;
  *   orders: órdenes de las cuentas normales; fifo: realizado FIFO de todas (para el cuadre).
  */
 export async function studentTrades(studentId, fromMs, toMs, { withOrders = true } = {}) {
-  const execs = await store.loadExecutions(studentId, fromMs, toMs);
-  const orders = withOrders ? await store.loadOrders(studentId, fromMs, toMs) : [];
+  // las cuentas marcadas «No contar» (pruebas, cuentas fuera del programa) no entran en nada
+  const counted = (x) => x.role !== "excluded";
+  const execs = (await store.loadExecutions(studentId, fromMs, toMs)).filter(counted);
+  const orders = withOrders ? (await store.loadOrders(studentId, fromMs, toMs)).filter(counted) : [];
   const isMaster = (x) => x.role === "master";
   const main = reconstruct(execs.filter((x) => !isMaster(x)));
   const master = reconstruct(execs.filter(isMaster));

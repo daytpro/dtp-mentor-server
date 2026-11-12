@@ -174,14 +174,15 @@ export async function ingest(studentId, b) {
     }
     for (const [acct, s] of state) {
       await client.query(
-        `INSERT INTO account_state (account_id, realized, unrealized, positions, updated_at)
-         VALUES ($1,$2,$3,$4, now())
+        `INSERT INTO account_state (account_id, realized, unrealized, positions, updated_at, pnl_at)
+         VALUES ($1,$2,$3,$4, now(), $5)
          ON CONFLICT (account_id) DO UPDATE SET
            realized   = COALESCE(EXCLUDED.realized, account_state.realized),
            unrealized = COALESCE(EXCLUDED.unrealized, account_state.unrealized),
            positions  = account_state.positions || EXCLUDED.positions,
-           updated_at = now()`,
-        [idOf(acct), s.realized ?? null, s.unrealized ?? null, JSON.stringify(s.positions)]);
+           updated_at = now(),
+           pnl_at     = COALESCE(EXCLUDED.pnl_at, account_state.pnl_at)`,
+        [idOf(acct), s.realized ?? null, s.unrealized ?? null, JSON.stringify(s.positions), s.pnlTime ? new Date(s.pnlTime) : null]);
     }
 
     await client.query("COMMIT");
@@ -224,7 +225,7 @@ export async function listStudents() {
 
 export async function accountStates(studentId) {
   const { rows } = await pool.query(
-    `SELECT a.name, a.conn, a.provider, a.role, st.realized, st.unrealized, st.positions, st.updated_at,
+    `SELECT a.name, a.conn, a.provider, a.role, st.realized, st.unrealized, st.positions, st.updated_at, st.pnl_at,
             (SELECT max(e.received_at) FROM executions e WHERE e.account_id = a.id) AS last_exec_at
        FROM accounts a LEFT JOIN account_state st ON st.account_id = a.id
       WHERE a.student_id = $1 ORDER BY a.name`, [studentId]);
