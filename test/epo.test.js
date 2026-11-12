@@ -27,7 +27,15 @@ test("nombres de EPO: entradas, salidas y setups", () => {
   assert.deepEqual(originOf({ entryName: null }), { origin: null, setup: null, exitBy: null });
 });
 
-test("ratio: neutro solo 1:1; TP por debajo de la entrada = negativo; SL en BE aparte", () => {
+test("ratio: neutro 1:1 con margen del 5 %", () => {
+  const t = { side: "Long", avgEntry: 100 };
+  assert.deepEqual([ratioOf(t, { tp: 150.25, sl: 50 }).ratioClass, ratioOf(t, { tp: 150.25, sl: 50 }).ratio], ["neutral", 1]);   // 1 tick de más
+  assert.equal(ratioOf(t, { tp: 147.75, sl: 50 }).ratioClass, "neutral");   // 0,955
+  assert.equal(ratioOf(t, { tp: 153, sl: 50 }).ratioClass, "positive");     // 1,06
+  assert.equal(ratioOf(t, { tp: 147, sl: 50 }).ratioClass, "negative");     // 0,94
+});
+
+test("ratio: neutro 1:1; TP por debajo de la entrada = negativo; SL en BE aparte", () => {
   const t = { side: "Long", avgEntry: 100 };
   assert.equal(ratioOf(t, { tp: 110, sl: 90 }).ratioClass, "neutral");
   assert.equal(ratioOf(t, { tp: 120, sl: 90 }).ratioClass, "positive");

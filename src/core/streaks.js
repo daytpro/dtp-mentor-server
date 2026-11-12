@@ -8,6 +8,9 @@
 //  · «Qué pasa después»: acierto, esperanza, contratos y ratio de la operación siguiente
 //    tras 1, 2 o 3+ ganadoras/perdedoras. Para decidir si subir o bajar contratos o ratio.
 
+/** Casos con ratio necesarios para decir si sube o baja el ratio tras una racha. */
+export const MIN_RATIO_N = 5;
+
 const round2 = (v) => Math.round(v * 100) / 100;
 const isBE = (t) => t.net === 0 || (t.points != null && Math.abs(t.points) < 1e-9);
 const kindOf = (t) => (t.net > 0 ? "W" : "L");
@@ -98,8 +101,9 @@ function afterStreaks(trades) {
         avgQty: x.n ? round2(x.qty / x.n) : null,
         moreQty: x.n && usualQty ? x.qty / x.n > usualQty * 1.2 : false,
         avgRatio: r != null ? round2(r) : null,
-        // ratio frente a su media: más positivo / igual / más negativo (±10 %)
-        ratioShift: r == null || avgRatio == null ? null : r > avgRatio * 1.1 + 1e-9 ? "up" : r < avgRatio * 0.9 - 1e-9 ? "down" : "same",
+        ratioN: x.ratioN,
+        // ratio frente a su media: más positivo / igual / más negativo (±10 %); con menos de 5 casos no se dice nada
+        ratioShift: r == null || avgRatio == null || x.ratioN < MIN_RATIO_N ? null : r > avgRatio * 1.1 + 1e-9 ? "up" : r < avgRatio * 0.9 - 1e-9 ? "down" : "same",
       };
     }),
   };

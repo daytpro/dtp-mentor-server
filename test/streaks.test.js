@@ -31,7 +31,7 @@ test("qué pasa después: acierto, contratos y ratio de la siguiente", () => {
   assert.equal(row("L2").n, 1);
   assert.equal(row("L2").avgQty, 3);
   assert.equal(row("L2").moreQty, true);                          // sube contratos tras dos pérdidas
-  assert.equal(row("L2").ratioShift, "down");
+  assert.equal(row("L2").ratioShift, null);                       // 1 caso con ratio: no se dice nada
   assert.equal(row("L3").n, 1);
   assert.equal(row("L3").winRate, 100);
   assert.equal(s.current.kind, "W");
@@ -59,4 +59,13 @@ test("aviso: racha perdedora fuera de lo normal para ese alumno (una vez por rac
   assert.match(describe(f[0]), /^Racha perdedora fuera de lo normal: 2 pérdidas seguidas/);
   hist.push(tr("2026-11-12", 15, live));
   assert.equal(streakFindings(hist).length, 0);              // la racha ya se cortó
+});
+
+test("qué pasa después: el ratio sube/baja solo con 5 casos o más", () => {
+  const seq = [];
+  for (let i = 0; i < 6; i++) seq.push(tr("2026-11-12", 20, { ratio: 2 }), tr("2026-11-12", -10, { ratio: 1 }));
+  const s = streakSummary(seq, seq, "2026-11-12");
+  const w1 = s.after.rows.find((r) => r.key === "W1");
+  assert.equal(w1.ratioN, 6);
+  assert.equal(w1.ratioShift, "down");                            // tras ganar usa 1:1, por debajo de su media 1,5
 });

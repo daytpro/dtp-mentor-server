@@ -7,7 +7,7 @@
 //    las órdenes de la cuenta maestra con el mismo nombre, así que en la cuenta real
 //    también se reconocen.
 //  · Ratio = distancia al TP / distancia al SL, con el TP y el SL donde estaban al cerrar
-//    la operación. Neutro = exactamente 1:1. Por debajo, negativo; por encima, positivo.
+//    la operación. Neutro = 1:1 (con un margen del 5 %). Por debajo, negativo; por encima, positivo.
 //    Con el Replicator los TP/SL solo existen en la cuenta maestra (Sim): se toman de la
 //    operación de la maestra que empezó a la vez (mismo instrumento y lado).
 
@@ -89,6 +89,9 @@ export function protectionOf(t, orders) {
   return { tp: tpQ ? tpV / tpQ : null, sl: slQ ? slV / slQ : null };
 }
 
+/** Margen del neutro: TP y SL a menos de un 5 % de distancia entre sí cuentan como 1:1. */
+export const NEUTRAL_TOL = 0.05;
+
 /** Ratio de una operación a partir de su TP/SL. */
 export function ratioOf(t, prot) {
   const dir = t.side === "Long" ? 1 : -1;
@@ -98,8 +101,9 @@ export function ratioOf(t, prot) {
   if (prot.tp == null) return { ratio: null, ratioClass: "runner", risk };
   const reward = (prot.tp - t.avgEntry) * dir;             // puede ser negativo: TP por debajo de la entrada
   const ratio = reward / risk;
-  const cls = Math.abs(reward - risk) < 1e-9 ? "neutral" : ratio > 1 ? "positive" : "negative";
-  return { ratio: round2(ratio), ratioClass: cls, risk };
+  // neutro = 1:1 con un margen: un tick de deslizamiento en la entrada no lo convierte en positivo/negativo
+  if (Math.abs(ratio - 1) <= NEUTRAL_TOL) return { ratio: 1, ratioClass: "neutral", risk };
+  return { ratio: round2(ratio), ratioClass: ratio > 1 ? "positive" : "negative", risk };
 }
 
 /**
