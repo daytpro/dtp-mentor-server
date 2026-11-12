@@ -21,6 +21,7 @@ import { verifyLicense, isAdmin, AuthError } from "./auth.js";
 import { parseBatch, dedupeExecutions } from "./protocol.js";
 import { tradesForDays } from "./load.js";
 import { epoSummary } from "./core/epo.js";
+import { streakSummary } from "./core/streaks.js";
 import { summarize } from "./core/stats.js";
 import { tradingDay, addDays, parseUtc } from "./core/time.js";
 import * as store from "./store.js";
@@ -111,7 +112,7 @@ export async function handle(req, res) {
 
   if (req.method === "GET" && (path === "/health" || path === "/")) {
     await pool.query("SELECT 1");
-    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.5.1" });
+    return send(res, 200, { ok: true, service: "dtp-mentor-server", version: "0.6.0" });
   }
 
   // ───────────────────────────── AddOn
@@ -233,6 +234,9 @@ export async function handle(req, res) {
       if (m[2] === "trades") return send(res, 200, { email: student.email, from, to, trades: [...trades].reverse(), open });
       // conducta del periodo (incluye lo histórico; los stops solo existen desde que hay AddOn)
       const findings = evaluate({ trades, open, orders }).filter((f) => { const d = tradingDay(f.at); return d >= from && d <= to; });
+      // su historial (180 días) para saber si una racha es normal en él
+      const histFrom = new Date(Date.parse(to + "T00:00:00Z") - 180 * DAY).toISOString().slice(0, 10);
+      const history = histFrom < from ? await tradesFor(student.id, histFrom, to, { withOrders: false }) : { trades };
       // acierto del grupo en el mismo periodo (para comparar)
       let gw = 0, gn = 0;
       for (const o of await store.listStudents()) {
@@ -242,6 +246,7 @@ export async function handle(req, res) {
       return send(res, 200, {
         email: student.email, from, to, ...summarize(trades, { tz }), open, conduct: conductCounts(findings),
         epo: epoSummary(trades, { hasMaster }),
+        streaks: streakSummary(trades, history.trades, tradingDay(Date.now())),
         since: student.created_at, mentor: await store.mentorName(student.mentor_id), groupWinRate: gn ? Math.round((gw / gn) * 10000) / 100 : null, groupTrades: gn,
       });
     }
